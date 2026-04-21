@@ -1,0 +1,24 @@
+{
+  "expo": {
+    "name": "The Somni",
+    "slug": "the-somni",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "ios": {
+      "bundleIdentifier": "com.thesomni.app",
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "The Somni records audio for sleep and wake playback.",
+        "UIBackgroundModes": ["audio", "fetch"]
+      }
+    },
+    "android": {
+      "package": "com.thesomni.app",
+      "permissions": [
+        "RECORD_AUDIO",
+        "RECEIVE_BOOT_COMPLETED",
+        "VIBRATE"
+      ]
+    },
+    "plugins": ["expo-notifications"]
+  }
+}
