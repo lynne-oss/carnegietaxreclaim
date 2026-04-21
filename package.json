@@ -1,25 +1,25 @@
 {
   "name": "the-somni",
   "version": "1.0.0",
-  "main": "node_modules/expo/AppEntry.js",
+  "main": "index.js",
   "scripts": {
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios"
   },
   "dependencies": {
-    "@react-native-async-storage/async-storage": "1.23.1",
-    "expo": "~52.0.0",
-    "expo-av": "~15.0.0",
-    "expo-notifications": "~0.29.0",
-    "expo-status-bar": "~2.0.0",
-    "react": "18.3.1",
-    "react-native": "0.76.5"
+    "@react-native-async-storage/async-storage": "2.2.0",
+    "expo": "~55.0.16",
+    "expo-audio": "~55.0.14",
+    "expo-notifications": "~55.0.20",
+    "expo-status-bar": "~55.0.5",
+    "react": "19.2.0",
+    "react-native": "0.83.6"
   },
   "devDependencies": {
     "@babel/core": "^7.24.0",
-    "@types/react": "~18.3.12",
-    "typescript": "^5.3.0"
+    "@types/react": "~19.2.0",
+    "typescript": "^5.9.0"
   },
   "private": true
 }
