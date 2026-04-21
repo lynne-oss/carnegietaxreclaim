@@ -1,13 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { View, Text, Button, TextInput, Alert } from 'react-native';
-import {
-  useAudioRecorder,
-  createAudioPlayer,
-  setAudioModeAsync,
-  requestRecordingPermissionsAsync,
-  RecordingPresets,
-  type AudioPlayer,
-} from 'expo-audio';
+import { Audio } from 'expo-av';
 import * as Notifications from 'expo-notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -15,6 +8,8 @@ const REC_URI_KEY = '@somni_rec';
 const BEDTIME_KEY = '@somni_bed';
 const WAKETIME_KEY = '@somni_wake';
 
+// When a notification arrives while the app is open, play audio directly
+// instead of showing the banner.
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
     shouldShowBanner: false,
@@ -25,34 +20,34 @@ Notifications.setNotificationHandler({
 });
 
 export default function App() {
-  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
-
   const [isRecording, setIsRecording] = useState(false);
   const [hasRecording, setHasRecording] = useState(false);
   const [bedtime, setBedtime] = useState('22:00');
   const [waketime, setWaketime] = useState('07:00');
   const [status, setStatus] = useState('Record your sleep audio to begin.');
 
-  const playerRef = useRef<AudioPlayer | null>(null);
+  const recordingRef = useRef<Audio.Recording | null>(null);
+  const soundRef = useRef<Audio.Sound | null>(null);
   // Prevents the 30-second interval from firing playback twice within the same minute.
   const lastPlayedRef = useRef('');
 
   const startLoop = useCallback(async (uri: string) => {
     try {
-      if (playerRef.current) {
-        playerRef.current.pause();
-        playerRef.current.remove();
-        playerRef.current = null;
+      if (soundRef.current) {
+        await soundRef.current.stopAsync().catch(() => {});
+        await soundRef.current.unloadAsync().catch(() => {});
+        soundRef.current = null;
       }
-      await setAudioModeAsync({
-        allowsRecording: false,
-        playsInSilentMode: true,
-        shouldPlayInBackground: true,
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: false,
+        playsInSilentModeIOS: true,   // plays even when the mute switch is on
+        staysActiveInBackground: true, // keeps playing when screen locks
       });
-      const player = createAudioPlayer({ uri });
-      player.loop = true;
-      player.play();
-      playerRef.current = player;
+      const { sound } = await Audio.Sound.createAsync(
+        { uri },
+        { shouldPlay: true, isLooping: true },
+      );
+      soundRef.current = sound;
       setStatus('Playing on loop...');
     } catch {
       setStatus('Playback error — re-record and try again.');
@@ -63,20 +58,20 @@ export default function App() {
     let timer: ReturnType<typeof setInterval>;
 
     (async () => {
-      await requestRecordingPermissionsAsync();
+      await Audio.requestPermissionsAsync();
 
       const { granted } = await Notifications.requestPermissionsAsync();
       if (!granted) {
         Alert.alert(
           'Notifications disabled',
-          'Enable notifications for The Somni in iOS Settings so playback can trigger at your scheduled times.',
+          'Enable notifications for The Somni in iOS Settings so scheduled playback can trigger.',
         );
       }
 
-      await setAudioModeAsync({
-        allowsRecording: false,
-        playsInSilentMode: true,
-        shouldPlayInBackground: true,
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: false,
+        playsInSilentModeIOS: true,
+        staysActiveInBackground: true,
       });
 
       const [savedUri, savedBed, savedWake] = await Promise.all([
@@ -92,14 +87,14 @@ export default function App() {
       if (savedBed) setBedtime(savedBed);
       if (savedWake) setWaketime(savedWake);
 
-      // If the app was launched by the user tapping a notification, start the loop on open.
+      // If the app was launched by tapping a scheduled notification, start loop on open.
       const lastResponse = await Notifications.getLastNotificationResponseAsync();
       const launchType = lastResponse?.notification.request.content.data?.type;
       if ((launchType === 'bedtime' || launchType === 'waketime') && savedUri) {
         startLoop(savedUri);
       }
 
-      // Time check that fires while JS is running (foreground + short background windows).
+      // Active time-check: fires every 30 s while JS is running (foreground + background).
       timer = setInterval(async () => {
         const now = new Date();
         const hhmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
@@ -118,6 +113,7 @@ export default function App() {
       }, 30_000);
     })();
 
+    // Notification received while app is in foreground → play silently (no banner)
     const onReceive = Notifications.addNotificationReceivedListener(async (notif) => {
       const t = notif.request.content.data?.type;
       if (t === 'bedtime' || t === 'waketime') {
@@ -126,6 +122,7 @@ export default function App() {
       }
     });
 
+    // User taps notification while app is backgrounded → audio starts on open
     const onResponse = Notifications.addNotificationResponseReceivedListener(async (resp) => {
       const t = resp.notification.request.content.data?.type;
       if (t === 'bedtime' || t === 'waketime') {
@@ -138,24 +135,19 @@ export default function App() {
       clearInterval(timer);
       onReceive.remove();
       onResponse.remove();
-      if (playerRef.current) {
-        playerRef.current.pause();
-        playerRef.current.remove();
-        playerRef.current = null;
-      }
+      soundRef.current?.unloadAsync().catch(() => {});
     };
   }, [startLoop]);
 
   async function toggleRecording() {
     if (isRecording) {
+      const rec = recordingRef.current;
+      if (!rec) return;
       try {
-        await recorder.stop();
-        const uri = recorder.uri;
-        await setAudioModeAsync({
-          allowsRecording: false,
-          playsInSilentMode: true,
-          shouldPlayInBackground: true,
-        });
+        await rec.stopAndUnloadAsync();
+        const uri = rec.getURI();
+        recordingRef.current = null;
+        await Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true });
         if (uri) {
           await AsyncStorage.setItem(REC_URI_KEY, uri);
           setHasRecording(true);
@@ -167,13 +159,11 @@ export default function App() {
       setIsRecording(false);
     } else {
       try {
-        await setAudioModeAsync({
-          allowsRecording: true,
-          playsInSilentMode: true,
-          shouldPlayInBackground: true,
-        });
-        await recorder.prepareToRecordAsync();
-        recorder.record();
+        await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
+        const { recording } = await Audio.Recording.createAsync(
+          Audio.RecordingOptionsPresets.HIGH_QUALITY,
+        );
+        recordingRef.current = recording;
         setIsRecording(true);
         setStatus('Recording...');
       } catch {
