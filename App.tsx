@@ -29,10 +29,13 @@ export default function App() {
 
   const recordingRef = useRef<Audio.Recording | null>(null);
   const soundRef = useRef<Audio.Sound | null>(null);
+  // Incremented by stopPlayback to cancel any startLoop that is mid-flight.
+  const genRef = useRef(0);
   // Prevents the 30-second interval from firing playback twice within the same minute.
   const lastPlayedRef = useRef('');
 
   const startLoop = useCallback(async (uri: string) => {
+    const gen = ++genRef.current;
     try {
       if (soundRef.current) {
         await soundRef.current.stopAsync().catch(() => {});
@@ -48,6 +51,11 @@ export default function App() {
         { uri },
         { shouldPlay: true, isLooping: true },
       );
+      // stopPlayback was called while createAsync was in flight — discard the sound.
+      if (gen !== genRef.current) {
+        await sound.unloadAsync().catch(() => {});
+        return;
+      }
       soundRef.current = sound;
       setIsPlaying(true);
       setStatus('Playing on loop...');
@@ -57,10 +65,12 @@ export default function App() {
   }, []);
 
   async function stopPlayback() {
-    if (soundRef.current) {
-      await soundRef.current.stopAsync().catch(() => {});
-      await soundRef.current.unloadAsync().catch(() => {});
-      soundRef.current = null;
+    genRef.current++;            // cancel any createAsync still in flight
+    const snd = soundRef.current;
+    soundRef.current = null;
+    if (snd) {
+      await snd.stopAsync().catch(() => {});
+      await snd.unloadAsync().catch(() => {});
     }
     setIsPlaying(false);
     setStatus('Stopped.');
@@ -280,7 +290,7 @@ export default function App() {
       </View>
 
       <View style={{ marginTop: 16 }}>
-        <Button title="Stop Playback" onPress={stopPlayback} disabled={!isPlaying} />
+        <Button title="Stop Playback" onPress={stopPlayback} />
       </View>
 
       <Text style={{ marginTop: 32, color: '#666', lineHeight: 22 }}>{status}</Text>
