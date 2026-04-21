@@ -21,6 +21,7 @@ Notifications.setNotificationHandler({
 
 export default function App() {
   const [isRecording, setIsRecording] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(false);
   const [hasRecording, setHasRecording] = useState(false);
   const [bedtime, setBedtime] = useState('22:00');
   const [waketime, setWaketime] = useState('07:00');
@@ -48,11 +49,22 @@ export default function App() {
         { shouldPlay: true, isLooping: true },
       );
       soundRef.current = sound;
+      setIsPlaying(true);
       setStatus('Playing on loop...');
     } catch {
       setStatus('Playback error — re-record and try again.');
     }
   }, []);
+
+  async function stopPlayback() {
+    if (soundRef.current) {
+      await soundRef.current.stopAsync().catch(() => {});
+      await soundRef.current.unloadAsync().catch(() => {});
+      soundRef.current = null;
+    }
+    setIsPlaying(false);
+    setStatus('Stopped.');
+  }
 
   useEffect(() => {
     let timer: ReturnType<typeof setInterval>;
@@ -265,6 +277,10 @@ export default function App() {
 
       <View style={{ marginTop: 24 }}>
         <Button title="Schedule Daily Playback" onPress={schedule} />
+      </View>
+
+      <View style={{ marginTop: 16 }}>
+        <Button title="Stop Playback" onPress={stopPlayback} disabled={!isPlaying} />
       </View>
 
       <Text style={{ marginTop: 32, color: '#666', lineHeight: 22 }}>{status}</Text>
