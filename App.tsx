@@ -8,8 +8,12 @@ const REC_URI_KEY = '@somni_rec';
 const BEDTIME_KEY = '@somni_bed';
 const WAKETIME_KEY = '@somni_wake';
 
-// When a notification arrives while the app is open, play audio directly
-// instead of showing the banner.
+const SLEEP_PLAY_MS   = 30 * 60 * 1000; // play for 30 minutes before fading
+const SLEEP_FADE_MS   = 60 * 1000;      // fade out over 60 seconds
+const SLEEP_FADE_STEP = 500;            // volume step every 500 ms  (120 steps total)
+const WAKE_FADE_MS    = 30 * 1000;      // fade in over 30 seconds
+const WAKE_FADE_STEP  = 100;            // volume step every 100 ms  (300 steps total)
+
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
     shouldShowBanner: false,
@@ -27,45 +31,99 @@ export default function App() {
   const [waketime, setWaketime] = useState('07:00');
   const [status, setStatus] = useState('Record your sleep audio to begin.');
 
-  const recordingRef = useRef<Audio.Recording | null>(null);
-  const soundRef = useRef<Audio.Sound | null>(null);
-  // Incremented by stopPlayback to cancel any startLoop that is mid-flight.
-  const genRef = useRef(0);
-  // Prevents the 30-second interval from firing playback twice within the same minute.
+  const recordingRef  = useRef<Audio.Recording | null>(null);
+  const soundRef      = useRef<Audio.Sound | null>(null);
+  const genRef        = useRef(0);          // cancel in-flight createAsync on stop
+  const sleepTimer    = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fadeTimer     = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastPlayedRef = useRef('');
 
-  const startLoop = useCallback(async (uri: string) => {
+  function clearFadeTimers() {
+    if (sleepTimer.current)  { clearTimeout(sleepTimer.current);  sleepTimer.current  = null; }
+    if (fadeTimer.current)   { clearInterval(fadeTimer.current);  fadeTimer.current   = null; }
+  }
+
+  const startLoop = useCallback(async (uri: string, type: 'bedtime' | 'waketime') => {
     const gen = ++genRef.current;
+    clearFadeTimers();
+
     try {
       if (soundRef.current) {
         await soundRef.current.stopAsync().catch(() => {});
         await soundRef.current.unloadAsync().catch(() => {});
         soundRef.current = null;
       }
+
       await Audio.setAudioModeAsync({
         allowsRecordingIOS: false,
-        playsInSilentModeIOS: true,   // plays even when the mute switch is on
-        staysActiveInBackground: true, // keeps playing when screen locks
+        playsInSilentModeIOS: true,    // plays even when the mute switch is on
+        staysActiveInBackground: true, // keeps playing when the screen locks
       });
+
+      // Wake audio starts silent; sleep audio starts at full volume.
+      const startVolume = type === 'waketime' ? 0 : 1;
+
       const { sound } = await Audio.Sound.createAsync(
         { uri },
-        { shouldPlay: true, isLooping: true },
+        { shouldPlay: true, isLooping: true, volume: startVolume },
       );
-      // stopPlayback was called while createAsync was in flight — discard the sound.
+
       if (gen !== genRef.current) {
         await sound.unloadAsync().catch(() => {});
         return;
       }
+
       soundRef.current = sound;
       setIsPlaying(true);
-      setStatus('Playing on loop...');
+
+      if (type === 'waketime') {
+        // ── Fade IN: 0 → 1 over WAKE_FADE_MS ────────────────────────────────
+        const steps = WAKE_FADE_MS / WAKE_FADE_STEP;
+        let step = 0;
+        setStatus('Waking gently...');
+        fadeTimer.current = setInterval(async () => {
+          if (gen !== genRef.current) { clearInterval(fadeTimer.current!); return; }
+          step++;
+          await soundRef.current?.setVolumeAsync(Math.min(step / steps, 1)).catch(() => {});
+          if (step >= steps) {
+            clearInterval(fadeTimer.current!);
+            fadeTimer.current = null;
+            setStatus('Playing on loop...');
+          }
+        }, WAKE_FADE_STEP);
+      } else {
+        // ── Sleep: play for SLEEP_PLAY_MS, then fade OUT: 1 → 0 over SLEEP_FADE_MS ──
+        setStatus('Playing — fades out after 30 min.');
+        sleepTimer.current = setTimeout(() => {
+          if (gen !== genRef.current) return;
+          setStatus('Fading out...');
+          const steps = SLEEP_FADE_MS / SLEEP_FADE_STEP;
+          let step = 0;
+          fadeTimer.current = setInterval(async () => {
+            if (gen !== genRef.current) { clearInterval(fadeTimer.current!); return; }
+            step++;
+            await soundRef.current?.setVolumeAsync(Math.max(1 - step / steps, 0)).catch(() => {});
+            if (step >= steps) {
+              clearInterval(fadeTimer.current!);
+              fadeTimer.current = null;
+              const snd = soundRef.current;
+              soundRef.current = null;
+              await snd?.stopAsync().catch(() => {});
+              await snd?.unloadAsync().catch(() => {});
+              setIsPlaying(false);
+              setStatus('Faded out. Sleep well.');
+            }
+          }, SLEEP_FADE_STEP);
+        }, SLEEP_PLAY_MS);
+      }
     } catch {
       setStatus('Playback error — re-record and try again.');
     }
   }, []);
 
   async function stopPlayback() {
-    genRef.current++;            // cancel any createAsync still in flight
+    genRef.current++;
+    clearFadeTimers();
     const snd = soundRef.current;
     soundRef.current = null;
     if (snd) {
@@ -109,16 +167,14 @@ export default function App() {
       if (savedBed) setBedtime(savedBed);
       if (savedWake) setWaketime(savedWake);
 
-      // If the app was launched by tapping a scheduled notification, start loop on open.
       const lastResponse = await Notifications.getLastNotificationResponseAsync();
-      const launchType = lastResponse?.notification.request.content.data?.type;
+      const launchType = lastResponse?.notification.request.content.data?.type as 'bedtime' | 'waketime' | undefined;
       if ((launchType === 'bedtime' || launchType === 'waketime') && savedUri) {
-        startLoop(savedUri);
+        startLoop(savedUri, launchType);
       }
 
-      // Active time-check: fires every 30 s while JS is running (foreground + background).
       timer = setInterval(async () => {
-        const now = new Date();
+        const now  = new Date();
         const hhmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
         if (lastPlayedRef.current === hhmm) return;
 
@@ -128,33 +184,30 @@ export default function App() {
           AsyncStorage.getItem(WAKETIME_KEY),
         ]);
 
-        if (uri && (hhmm === bed || hhmm === wake)) {
-          lastPlayedRef.current = hhmm;
-          startLoop(uri);
-        }
+        if (uri && hhmm === bed)  { lastPlayedRef.current = hhmm; startLoop(uri, 'bedtime');  }
+        if (uri && hhmm === wake) { lastPlayedRef.current = hhmm; startLoop(uri, 'waketime'); }
       }, 30_000);
     })();
 
-    // Notification received while app is in foreground → play silently (no banner)
     const onReceive = Notifications.addNotificationReceivedListener(async (notif) => {
-      const t = notif.request.content.data?.type;
+      const t = notif.request.content.data?.type as 'bedtime' | 'waketime' | undefined;
       if (t === 'bedtime' || t === 'waketime') {
         const uri = await AsyncStorage.getItem(REC_URI_KEY);
-        if (uri) startLoop(uri);
+        if (uri) startLoop(uri, t);
       }
     });
 
-    // User taps notification while app is backgrounded → audio starts on open
     const onResponse = Notifications.addNotificationResponseReceivedListener(async (resp) => {
-      const t = resp.notification.request.content.data?.type;
+      const t = resp.notification.request.content.data?.type as 'bedtime' | 'waketime' | undefined;
       if (t === 'bedtime' || t === 'waketime') {
         const uri = await AsyncStorage.getItem(REC_URI_KEY);
-        if (uri) startLoop(uri);
+        if (uri) startLoop(uri, t);
       }
     });
 
     return () => {
       clearInterval(timer);
+      clearFadeTimers();
       onReceive.remove();
       onResponse.remove();
       soundRef.current?.unloadAsync().catch(() => {});
@@ -248,13 +301,14 @@ export default function App() {
       },
     });
 
-    setStatus(`Scheduled daily — sleep ${bedtime} · wake ${waketime}`);
+    setStatus(`Scheduled — sleep ${bedtime} (fades out after 30 min) · wake ${waketime} (fades in over 30 s)`);
 
     Alert.alert(
       'Scheduled',
-      `Sleep audio: ${bedtime}\nWake audio: ${waketime}\n\n` +
-      'App open → plays automatically at the exact time.\n' +
-      'App closed → tap the notification and it plays instantly.',
+      `Sleep ${bedtime}: plays for 30 min, fades out over 60 s.\n` +
+      `Wake ${waketime}: fades in over 30 s.\n\n` +
+      'App open → triggers automatically.\n' +
+      'App closed → tap the notification.',
     );
   }
 
