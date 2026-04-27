@@ -270,17 +270,15 @@ export default function App() {
 type BtnVariant = 'primary' | 'ghost' | 'recording';
 
 function Btn({ label, onPress, variant = 'primary' }: { label: string; onPress: () => void; variant?: BtnVariant }) {
-  const bg     = variant === 'primary'   ? C.accent
-               : variant === 'recording' ? '#3B1515'
-               : 'transparent';
-  const border = variant === 'ghost' ? C.border : 'transparent';
-  const color  = variant === 'recording' ? '#E8A0A0' : C.primary;
+  const bg     = '#F5F1EB';
+  const border = 'transparent';
+  const color  = '#0B0B0D';
 
   return (
     <TouchableOpacity
       onPress={onPress}
       activeOpacity={0.75}
-      style={[s.btn, { backgroundColor: bg, borderColor: border, borderWidth: variant === 'ghost' ? 1 : 0 }]}
+      style={[s.btn, { backgroundColor: bg, borderColor: border, borderWidth: 0 }]}
     >
       <Text style={[s.btnText, { color }]}>{label.toUpperCase()}</Text>
     </TouchableOpacity>
