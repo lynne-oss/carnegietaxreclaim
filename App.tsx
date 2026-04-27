@@ -4,9 +4,7 @@ import {
   SafeAreaView, StyleSheet, Alert,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { useFonts } from 'expo-font';
-import { CormorantGaramond_300Light } from '@expo-google-fonts/cormorant-garamond';
-import { Inter_300Light } from '@expo-google-fonts/inter';
+import * as Font from 'expo-font';
 import { Audio } from 'expo-av';
 import * as Notifications from 'expo-notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -42,8 +40,7 @@ Notifications.setNotificationHandler({
 });
 
 export default function App() {
-  const [fontsLoaded] = useFonts({ CormorantGaramond_300Light, Inter_300Light });
-
+  const [fontsLoaded, setFontsLoaded] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [isPlaying,   setIsPlaying]   = useState(false);
   const [hasRecording, setHasRecording] = useState(false);
@@ -130,6 +127,17 @@ export default function App() {
     setStatus('Stopped.');
   }
 
+  // Load fonts from unpkg — no npm package needed, no static require for Metro to
+  // choke on. Falls back silently to system fonts (fontWeight:'300') if offline.
+  useEffect(() => {
+    Font.loadAsync({
+      CormorantGaramond_300Light: { uri: 'https://unpkg.com/@expo-google-fonts/cormorant-garamond@0.4.1/300Light/CormorantGaramond_300Light.ttf' },
+      Inter_300Light:             { uri: 'https://unpkg.com/@expo-google-fonts/inter@0.4.2/300Light/Inter_300Light.ttf' },
+    })
+      .then(() => setFontsLoaded(true))
+      .catch(() => {/* system-font fallback */});
+  }, []);
+
   useEffect(() => {
     let timer: ReturnType<typeof setInterval>;
     (async () => {
@@ -208,11 +216,8 @@ export default function App() {
     Alert.alert('Scheduled', `Sleep ${bedtime}: plays 30 min then fades out.\nWake ${waketime}: fades in over 30 s.`);
   }
 
-  // Keep the dark background visible while fonts load.
-  if (!fontsLoaded) return <View style={s.root} />;
-
   return (
-    <SafeAreaView style={s.root}>
+    <SafeAreaView style={[s.root, { backgroundColor: '#0B0B0D' }]}>
       <StatusBar style="light" />
       <View style={s.inner}>
 
@@ -296,6 +301,7 @@ const s = StyleSheet.create({
   },
   title: {
     fontFamily: 'CormorantGaramond_300Light',
+    fontWeight: '300',
     fontSize: 42,
     color: C.primary,
     letterSpacing: 2,
@@ -308,6 +314,7 @@ const s = StyleSheet.create({
   },
   label: {
     fontFamily: 'Inter_300Light',
+    fontWeight: '300',
     fontSize: 11,
     color: C.secondary,
     letterSpacing: 2,
@@ -317,6 +324,7 @@ const s = StyleSheet.create({
   },
   input: {
     fontFamily: 'Inter_300Light',
+    fontWeight: '300',
     fontSize: 18,
     color: C.primary,
     borderWidth: 1,
@@ -334,11 +342,13 @@ const s = StyleSheet.create({
   },
   btnText: {
     fontFamily: 'Inter_300Light',
+    fontWeight: '300',
     fontSize: 11,
     letterSpacing: 2.5,
   },
   status: {
     fontFamily: 'Inter_300Light',
+    fontWeight: '300',
     fontSize: 13,
     color: C.secondary,
     lineHeight: 22,
