@@ -1,14 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect } from 'react';
 import * as Font from 'expo-font';
-import SignalScreen from './SignalScreen';
 import RecordScreen from './RecordScreen';
 
-type Screen = 'signal' | 'record';
-
 export default function App() {
-  const [screen, setScreen]       = useState<Screen>('signal');
-  const [statement, setStatement] = useState('');
-
   useEffect(() => {
     Font.loadAsync({
       CormorantGaramond_300Light: { uri: 'https://unpkg.com/@expo-google-fonts/cormorant-garamond@0.4.1/300Light/CormorantGaramond_300Light.ttf' },
@@ -16,13 +10,5 @@ export default function App() {
     }).catch(() => {});
   }, []);
 
-  if (screen === 'signal') {
-    return (
-      <SignalScreen
-        onSkip={() => setScreen('record')}
-        onRecord={(stmt) => { setStatement(stmt); setScreen('record'); }}
-      />
-    );
-  }
-  return <RecordScreen statement={statement} />;
+  return <RecordScreen />;
 }

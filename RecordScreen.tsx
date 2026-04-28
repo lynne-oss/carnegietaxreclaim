@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  View, Text, TextInput, ScrollView,
-  SafeAreaView, StyleSheet, Alert,
+  View, Text, TextInput, TouchableOpacity, ScrollView,
+  SafeAreaView, StyleSheet, Alert, ActivityIndicator,
+  KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { Audio } from 'expo-av';
@@ -20,6 +21,15 @@ const REC_URI_KEY  = '@somni_rec';
 const BEDTIME_KEY  = '@somni_bed';
 const WAKETIME_KEY = '@somni_wake';
 
+const SYSTEM_PROMPT =
+  `You are the Somni Decision Engine. Your job is to convert a user's input into a short direct statement they will record in their own voice. This statement represents a decision they have already made not a future intention. Use present tense only. Remove all future tense. Remove vague words like more better improve successful aligned abundant. Do not generate motivational affirmational or inspirational language. Do not invent identity claims. Anchor everything in observable behaviour. Keep output under 2 sentences. Output must be something a person can say naturally without overthinking. Output only the final statement. No explanation. If user input includes abundant manifest universe attract energy alignment remove those concepts completely and translate into behaviour. Return ONLY the final statement. No preamble no explanation no formatting.`;
+
+const API_URL = 'https://api.anthropic.com/v1/messages';
+const MODEL   = 'claude-haiku-4-5-20251001';
+
+type SignalPhase = 'input' | 'loading' | 'result' | 'direct';
+type Msg = { role: 'user' | 'assistant'; content: string };
+
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
     shouldShowBanner: false,
@@ -29,17 +39,18 @@ Notifications.setNotificationHandler({
   }),
 });
 
-interface Props {
-  statement?: string;
-}
-
-export default function RecordScreen({ statement }: Props) {
+export default function RecordScreen() {
   const [isRecording,  setIsRecording]  = useState(false);
   const [isPlaying,    setIsPlaying]    = useState(false);
   const [hasRecording, setHasRecording] = useState(false);
   const [bedtime,      setBedtime]      = useState('22:00');
   const [waketime,     setWaketime]     = useState('07:00');
   const [status,       setStatus]       = useState('Record your sleep audio to begin.');
+
+  const [signalPhase,   setSignalPhase]   = useState<SignalPhase>('input');
+  const [signalInput,   setSignalInput]   = useState('');
+  const [statement,     setStatement]     = useState('');
+  const [signalHistory, setSignalHistory] = useState<Msg[]>([]);
 
   const recordingRef  = useRef<Audio.Recording | null>(null);
   const soundRef      = useRef<Audio.Sound | null>(null);
@@ -165,7 +176,7 @@ export default function RecordScreen({ statement }: Props) {
         await rec.stopAndUnloadAsync();
         const uri = rec.getURI(); recordingRef.current = null;
         await Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true });
-        if (uri) { await AsyncStorage.setItem(REC_URI_KEY, uri); setHasRecording(true); setStatus('Saved. Set your times below, then tap Schedule.'); }
+        if (uri) { await AsyncStorage.setItem(REC_URI_KEY, uri); setHasRecording(true); setStatus('Saved. Set your times above, then tap Schedule.'); }
       } catch { setStatus('Error stopping recording — try again.'); }
       setIsRecording(false);
     } else {
@@ -198,58 +209,163 @@ export default function RecordScreen({ statement }: Props) {
     Alert.alert('Scheduled', `Sleep ${bedtime}: plays 30 min then fades out.\nWake ${waketime}: fades in over 30 s.`);
   }
 
+  async function callClaude(msgs: Msg[]) {
+    const apiKey = process.env.EXPO_PUBLIC_ANTHROPIC_API_KEY ?? '';
+    if (!apiKey) {
+      Alert.alert(
+        'API key missing',
+        'Create a .env file in the project root with:\n\nEXPO_PUBLIC_ANTHROPIC_API_KEY=sk-ant-...\n\nThen restart Expo with --clear.',
+      );
+      return;
+    }
+    setSignalPhase('loading');
+    try {
+      const res = await fetch(API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({ model: MODEL, max_tokens: 150, system: SYSTEM_PROMPT, messages: msgs }),
+      });
+      if (!res.ok) throw new Error(`API error ${res.status}: ${await res.text()}`);
+      const data = await res.json();
+      const text = (data.content[0].text as string).trim();
+      const updated: Msg[] = [...msgs, { role: 'assistant', content: text }];
+      setSignalHistory(updated);
+      setStatement(text);
+      setSignalPhase('result');
+    } catch (e: any) {
+      Alert.alert('Error', e.message ?? 'Something went wrong. Check your connection and try again.');
+      setSignalPhase('input');
+    }
+  }
+
+  function handleGenerate() {
+    const trimmed = signalInput.trim();
+    if (!trimmed) { Alert.alert('', 'Enter what you have already decided.'); return; }
+    callClaude([{ role: 'user', content: trimmed }]);
+  }
+
+  function handleSimplify() {
+    callClaude([...signalHistory, {
+      role: 'user',
+      content: 'Simplify further. Shorter. More direct. Higher certainty. Under one sentence.',
+    }]);
+  }
+
+  function handleTryAgain() {
+    setSignalPhase('input');
+    setStatement('');
+    setSignalHistory([]);
+  }
+
+  const recordLabel = isRecording
+    ? 'Stop Recording'
+    : signalPhase === 'result' ? 'Record in your voice' : 'Start Recording';
+
   return (
-    <SafeAreaView style={[s.root, { backgroundColor: '#0B0B0D' }]}>
+    <SafeAreaView style={s.root}>
       <StatusBar style="light" />
-      <ScrollView
-        contentContainerStyle={s.inner}
-        showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={{ flex: 1 }}
       >
-        <Text style={s.title}>The Somni</Text>
-        <View style={s.rule} />
+        <ScrollView
+          contentContainerStyle={s.inner}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
+          <Text style={s.title}>The Somni</Text>
+          <View style={s.rule} />
 
-        {/* Statement from The Signal shown as read-aloud reference */}
-        {!!statement && (
-          <View style={s.statementWrap}>
-            <Text style={s.statementLabel}>Your signal</Text>
-            <Text style={s.statementText}>{'"'}{statement}{'"'}</Text>
-            <View style={s.rule} />
+          {/* ── Schedule ── */}
+          <Text style={s.label}>Sleep time</Text>
+          <TextInput
+            value={bedtime}
+            onChangeText={setBedtime}
+            keyboardType="numbers-and-punctuation"
+            placeholderTextColor={C.secondary}
+            style={s.input}
+          />
+
+          <Text style={[s.label, { marginTop: 20 }]}>Wake time</Text>
+          <TextInput
+            value={waketime}
+            onChangeText={setWaketime}
+            keyboardType="numbers-and-punctuation"
+            placeholderTextColor={C.secondary}
+            style={s.input}
+          />
+
+          <View style={{ marginTop: 32 }}>
+            <Btn label="Schedule Daily Playback" onPress={schedule} />
           </View>
-        )}
+          <View style={{ marginTop: 12 }}>
+            <Btn label="Stop Playback" onPress={stopPlayback} />
+          </View>
 
-        <Btn
-          label={isRecording ? 'Stop Recording' : 'Start Recording'}
-          onPress={toggleRecording}
-        />
+          <Text style={s.status}>{status}</Text>
 
-        <Text style={s.label}>Sleep time</Text>
-        <TextInput
-          value={bedtime}
-          onChangeText={setBedtime}
-          keyboardType="numbers-and-punctuation"
-          placeholderTextColor={C.secondary}
-          style={s.input}
-        />
+          {/* ── Before You Record ── */}
+          <View style={s.sectionRule} />
+          <Text style={s.sectionHeading}>Before You Record</Text>
 
-        <Text style={[s.label, { marginTop: 20 }]}>Wake time</Text>
-        <TextInput
-          value={waketime}
-          onChangeText={setWaketime}
-          keyboardType="numbers-and-punctuation"
-          placeholderTextColor={C.secondary}
-          style={s.input}
-        />
+          {signalPhase === 'loading' && (
+            <View style={s.loadingWrap}>
+              <ActivityIndicator color={C.primary} size="small" />
+              <Text style={s.loadingText}>Finding your signal...</Text>
+            </View>
+          )}
 
-        <View style={{ marginTop: 32 }}>
-          <Btn label="Schedule Daily Playback" onPress={schedule} />
-        </View>
-        <View style={{ marginTop: 12 }}>
-          <Btn label="Stop Playback" onPress={stopPlayback} />
-        </View>
+          {signalPhase === 'input' && (
+            <>
+              <Text style={s.label}>What have you already decided?</Text>
+              <TextInput
+                value={signalInput}
+                onChangeText={setSignalInput}
+                multiline
+                style={s.signalInput}
+                placeholderTextColor={C.secondary}
+                placeholder="I've decided to…"
+              />
+              <View style={{ marginTop: 24 }}>
+                <Btn label="Generate" onPress={handleGenerate} />
+              </View>
+              <TouchableOpacity onPress={() => setSignalPhase('direct')} style={s.skipWrap} activeOpacity={0.6}>
+                <Text style={s.skip}>Already know what to say? Record directly.</Text>
+              </TouchableOpacity>
+            </>
+          )}
 
-        <Text style={s.status}>{status}</Text>
-      </ScrollView>
+          {signalPhase === 'result' && (
+            <>
+              <Text style={s.resultLabel}>Your signal</Text>
+              <Text style={s.resultStatement}>{'"'}{statement}{'"'}</Text>
+            </>
+          )}
+
+          {(signalPhase === 'result' || signalPhase === 'direct') && (
+            <>
+              <View style={{ marginTop: signalPhase === 'result' ? 32 : 0 }}>
+                <Btn label={recordLabel} onPress={toggleRecording} />
+              </View>
+              {signalPhase === 'result' && (
+                <>
+                  <View style={{ marginTop: 12 }}>
+                    <Btn label="Make it simpler" onPress={handleSimplify} />
+                  </View>
+                  <View style={{ marginTop: 12 }}>
+                    <Btn label="Try again" onPress={handleTryAgain} />
+                  </View>
+                </>
+              )}
+            </>
+          )}
+
+        </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
@@ -257,12 +373,12 @@ export default function RecordScreen({ statement }: Props) {
 const s = StyleSheet.create({
   root: {
     flex: 1,
-    backgroundColor: C.bg,
+    backgroundColor: '#0B0B0D',
   },
   inner: {
     paddingHorizontal: 28,
     paddingTop: 48,
-    paddingBottom: 48,
+    paddingBottom: 60,
   },
   title: {
     fontFamily: 'CormorantGaramond_300Light',
@@ -277,25 +393,19 @@ const s = StyleSheet.create({
     backgroundColor: C.border,
     marginBottom: 36,
   },
-  statementWrap: {
-    marginBottom: 8,
+  sectionRule: {
+    height: 1,
+    backgroundColor: C.border,
+    marginTop: 48,
+    marginBottom: 32,
   },
-  statementLabel: {
+  sectionHeading: {
     fontFamily: 'Inter_300Light',
     fontWeight: '300',
     fontSize: 11,
     color: C.secondary,
     letterSpacing: 2,
     textTransform: 'uppercase',
-    marginBottom: 14,
-  },
-  statementText: {
-    fontFamily: 'CormorantGaramond_300Light',
-    fontWeight: '300',
-    fontSize: 24,
-    color: C.primary,
-    lineHeight: 34,
-    letterSpacing: 0.5,
     marginBottom: 28,
   },
   label: {
@@ -306,7 +416,7 @@ const s = StyleSheet.create({
     letterSpacing: 2,
     textTransform: 'uppercase',
     marginBottom: 8,
-    marginTop: 28,
+    marginTop: 4,
   },
   input: {
     fontFamily: 'Inter_300Light',
@@ -319,6 +429,60 @@ const s = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 14,
     backgroundColor: C.inputBg,
+  },
+  signalInput: {
+    fontFamily: 'Inter_300Light',
+    fontWeight: '300',
+    fontSize: 18,
+    color: C.primary,
+    borderWidth: 1,
+    borderColor: C.border,
+    borderRadius: 2,
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+    backgroundColor: C.inputBg,
+    minHeight: 110,
+    textAlignVertical: 'top',
+  },
+  skipWrap: {
+    marginTop: 28,
+    alignItems: 'center',
+  },
+  skip: {
+    fontFamily: 'Inter_300Light',
+    fontWeight: '300',
+    fontSize: 13,
+    color: C.secondary,
+    textDecorationLine: 'underline',
+  },
+  loadingWrap: {
+    marginTop: 40,
+    alignItems: 'center',
+    gap: 16,
+  },
+  loadingText: {
+    fontFamily: 'Inter_300Light',
+    fontWeight: '300',
+    fontSize: 14,
+    color: C.secondary,
+    letterSpacing: 1,
+  },
+  resultLabel: {
+    fontFamily: 'Inter_300Light',
+    fontWeight: '300',
+    fontSize: 11,
+    color: C.secondary,
+    letterSpacing: 2,
+    textTransform: 'uppercase',
+    marginBottom: 16,
+  },
+  resultStatement: {
+    fontFamily: 'CormorantGaramond_300Light',
+    fontWeight: '300',
+    fontSize: 26,
+    color: C.primary,
+    lineHeight: 38,
+    letterSpacing: 0.5,
   },
   status: {
     fontFamily: 'Inter_300Light',
