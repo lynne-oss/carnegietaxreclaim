@@ -10,6 +10,7 @@ import * as Notifications from 'expo-notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Btn from './Btn';
 import { C } from './theme';
+import { LogEntry, LOG_KEY } from './types';
 
 const SLEEP_PLAY_MS   = 30 * 60 * 1000;
 const SLEEP_FADE_MS   = 60 * 1000;
@@ -39,13 +40,18 @@ Notifications.setNotificationHandler({
   }),
 });
 
-export default function RecordScreen() {
-  const [isRecording,  setIsRecording]  = useState(false);
-  const [isPlaying,    setIsPlaying]    = useState(false);
-  const [hasRecording, setHasRecording] = useState(false);
-  const [bedtime,      setBedtime]      = useState('22:00');
-  const [waketime,     setWaketime]     = useState('07:00');
-  const [status,       setStatus]       = useState('Record your sleep audio to begin.');
+interface Props {
+  onShowLog: () => void;
+}
+
+export default function RecordScreen({ onShowLog }: Props) {
+  const [isRecording,   setIsRecording]   = useState(false);
+  const [isPlaying,     setIsPlaying]     = useState(false);
+  const [isWakePlaying, setIsWakePlaying] = useState(false);
+  const [hasRecording,  setHasRecording]  = useState(false);
+  const [bedtime,       setBedtime]       = useState('22:00');
+  const [waketime,      setWaketime]      = useState('07:00');
+  const [status,        setStatus]        = useState('Record your sleep audio to begin.');
 
   const [signalPhase,   setSignalPhase]   = useState<SignalPhase>('input');
   const [signalInput,   setSignalInput]   = useState('');
@@ -89,6 +95,7 @@ export default function RecordScreen() {
       if (gen !== genRef.current) { await sound.unloadAsync().catch(() => {}); return; }
       soundRef.current = sound;
       setIsPlaying(true);
+      if (type === 'waketime') setIsWakePlaying(true);
 
       // Manual loop: play → 10 s silence → play → repeat
       sound.setOnPlaybackStatusUpdate((ps) => {
@@ -149,6 +156,7 @@ export default function RecordScreen() {
       await snd.unloadAsync().catch(() => {});
     }
     setIsPlaying(false);
+    setIsWakePlaying(false);
     setStatus('Stopped.');
   }
 
@@ -197,7 +205,15 @@ export default function RecordScreen() {
         await rec.stopAndUnloadAsync();
         const uri = rec.getURI(); recordingRef.current = null;
         await Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true });
-        if (uri) { await AsyncStorage.setItem(REC_URI_KEY, uri); setHasRecording(true); setStatus('Saved. Set your times above, then tap Schedule.'); }
+        if (uri) {
+          await AsyncStorage.setItem(REC_URI_KEY, uri);
+          setHasRecording(true);
+          setStatus('Saved. Set your times above, then tap Schedule.');
+          const entry: LogEntry = { id: Date.now().toString(), timestamp: Date.now(), text: statement };
+          const raw = await AsyncStorage.getItem(LOG_KEY).catch(() => null);
+          const existing: LogEntry[] = raw ? JSON.parse(raw) : [];
+          await AsyncStorage.setItem(LOG_KEY, JSON.stringify([entry, ...existing])).catch(() => {});
+        }
       } catch { setStatus('Error stopping recording — try again.'); }
       setIsRecording(false);
     } else {
@@ -286,6 +302,24 @@ export default function RecordScreen() {
     ? 'Stop Recording'
     : signalPhase === 'result' ? 'Record in your voice' : 'Start Recording';
 
+  // ── Wake mode: cream screen ───────────────────────────────────────────────────
+  if (isWakePlaying) {
+    return (
+      <SafeAreaView style={s.wakeRoot}>
+        <StatusBar style="dark" />
+        <View style={s.wakeInner}>
+          <Text style={s.wakeTitle}>The Somni</Text>
+          <View style={s.wakeRule} />
+          <Text style={s.wakeStatus}>{status}</Text>
+          <View style={{ marginTop: 48 }}>
+            <Btn label="Stop" onPress={stopPlayback} dark />
+          </View>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  // ── Normal dark screen ────────────────────────────────────────────────────────
   return (
     <SafeAreaView style={s.root}>
       <StatusBar style="light" />
@@ -298,7 +332,12 @@ export default function RecordScreen() {
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
-          <Text style={s.title}>The Somni</Text>
+          <View style={s.headerRow}>
+            <Text style={s.title}>The Somni</Text>
+            <TouchableOpacity onPress={onShowLog} activeOpacity={0.6} style={s.logLinkWrap}>
+              <Text style={s.logLink}>Log</Text>
+            </TouchableOpacity>
+          </View>
           <View style={s.rule} />
 
           {/* ── Schedule ── */}
@@ -401,13 +440,30 @@ const s = StyleSheet.create({
     paddingTop: 48,
     paddingBottom: 60,
   },
+  headerRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-end',
+    marginBottom: 20,
+  },
   title: {
     fontFamily: 'CormorantGaramond_300Light',
     fontWeight: '300',
     fontSize: 42,
     color: C.primary,
     letterSpacing: 2,
-    marginBottom: 20,
+  },
+  logLinkWrap: {
+    paddingBottom: 6,
+  },
+  logLink: {
+    fontFamily: 'Inter_300Light',
+    fontWeight: '300',
+    fontSize: 11,
+    color: C.secondary,
+    letterSpacing: 2,
+    textTransform: 'uppercase',
+    textDecorationLine: 'underline',
   },
   rule: {
     height: 1,
@@ -512,5 +568,39 @@ const s = StyleSheet.create({
     color: C.secondary,
     lineHeight: 22,
     marginTop: 36,
+  },
+  // ── Wake mode ──
+  wakeRoot: {
+    flex: 1,
+    backgroundColor: '#F5F1EB',
+  },
+  wakeInner: {
+    flex: 1,
+    paddingHorizontal: 28,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  wakeTitle: {
+    fontFamily: 'CormorantGaramond_300Light',
+    fontWeight: '300',
+    fontSize: 42,
+    color: '#0B0B0D',
+    letterSpacing: 2,
+    marginBottom: 20,
+  },
+  wakeRule: {
+    width: '100%',
+    height: 1,
+    backgroundColor: '#D8D2C8',
+    marginBottom: 40,
+  },
+  wakeStatus: {
+    fontFamily: 'Inter_300Light',
+    fontWeight: '300',
+    fontSize: 13,
+    color: '#7A7068',
+    letterSpacing: 2,
+    textTransform: 'uppercase',
+    textAlign: 'center',
   },
 });

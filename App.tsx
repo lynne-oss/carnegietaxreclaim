@@ -1,8 +1,13 @@
-import React, { useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import * as Font from 'expo-font';
 import RecordScreen from './RecordScreen';
+import LogScreen from './LogScreen';
+
+type Tab = 'main' | 'log';
 
 export default function App() {
+  const [tab, setTab] = useState<Tab>('main');
+
   useEffect(() => {
     Font.loadAsync({
       CormorantGaramond_300Light: { uri: 'https://unpkg.com/@expo-google-fonts/cormorant-garamond@0.4.1/300Light/CormorantGaramond_300Light.ttf' },
@@ -10,5 +15,6 @@ export default function App() {
     }).catch(() => {});
   }, []);
 
-  return <RecordScreen />;
+  if (tab === 'log') return <LogScreen onBack={() => setTab('main')} />;
+  return <RecordScreen onShowLog={() => setTab('log')} />;
 }
