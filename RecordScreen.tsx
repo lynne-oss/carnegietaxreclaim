@@ -58,6 +58,7 @@ export default function RecordScreen() {
   const sleepTimer    = useRef<ReturnType<typeof setTimeout>  | null>(null);
   const fadeTimer     = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastPlayedRef = useRef('');
+  const isFading      = useRef(false);
 
   function clearFadeTimers() {
     if (sleepTimer.current) { clearTimeout(sleepTimer.current);  sleepTimer.current = null; }
@@ -66,9 +67,11 @@ export default function RecordScreen() {
 
   const startLoop = useCallback(async (uri: string, type: 'bedtime' | 'waketime') => {
     const gen = ++genRef.current;
+    isFading.current = false;
     clearFadeTimers();
     try {
       if (soundRef.current) {
+        soundRef.current.setOnPlaybackStatusUpdate(null);
         await soundRef.current.stopAsync().catch(() => {});
         await soundRef.current.unloadAsync().catch(() => {});
         soundRef.current = null;
@@ -81,11 +84,21 @@ export default function RecordScreen() {
       const startVolume = type === 'waketime' ? 0 : 1;
       const { sound } = await Audio.Sound.createAsync(
         { uri },
-        { shouldPlay: true, isLooping: true, volume: startVolume },
+        { shouldPlay: true, isLooping: false, volume: startVolume },
       );
       if (gen !== genRef.current) { await sound.unloadAsync().catch(() => {}); return; }
       soundRef.current = sound;
       setIsPlaying(true);
+
+      // Manual loop: play → 10 s silence → play → repeat
+      sound.setOnPlaybackStatusUpdate((ps) => {
+        if (!ps.isLoaded || !ps.didJustFinish) return;
+        if (gen !== genRef.current || isFading.current) return;
+        setTimeout(async () => {
+          if (gen !== genRef.current || isFading.current) return;
+          await soundRef.current?.replayAsync().catch(() => {});
+        }, 10_000);
+      });
 
       if (type === 'waketime') {
         const steps = WAKE_FADE_MS / WAKE_FADE_STEP;
@@ -102,6 +115,7 @@ export default function RecordScreen() {
         sleepTimer.current = setTimeout(() => {
           if (gen !== genRef.current) return;
           setStatus('Fading out...');
+          isFading.current = true;
           const steps = SLEEP_FADE_MS / SLEEP_FADE_STEP;
           let step = 0;
           fadeTimer.current = setInterval(async () => {
@@ -111,7 +125,9 @@ export default function RecordScreen() {
             if (step >= steps) {
               clearInterval(fadeTimer.current!); fadeTimer.current = null;
               const snd = soundRef.current; soundRef.current = null;
+              snd?.setOnPlaybackStatusUpdate(null);
               await snd?.stopAsync().catch(() => {}); await snd?.unloadAsync().catch(() => {});
+              isFading.current = false;
               setIsPlaying(false); setStatus('Faded out. Sleep well.');
             }
           }, SLEEP_FADE_STEP);
@@ -124,9 +140,14 @@ export default function RecordScreen() {
 
   async function stopPlayback() {
     genRef.current++;
+    isFading.current = false;
     clearFadeTimers();
     const snd = soundRef.current; soundRef.current = null;
-    if (snd) { await snd.stopAsync().catch(() => {}); await snd.unloadAsync().catch(() => {}); }
+    if (snd) {
+      snd.setOnPlaybackStatusUpdate(null);
+      await snd.stopAsync().catch(() => {});
+      await snd.unloadAsync().catch(() => {});
+    }
     setIsPlaying(false);
     setStatus('Stopped.');
   }
