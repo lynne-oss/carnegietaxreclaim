@@ -54,7 +54,9 @@ export default function RecordScreen({ onShowLog }: Props) {
   const [status,        setStatus]        = useState('Record your sleep audio to begin.');
 
   const [signalPhase,   setSignalPhase]   = useState<SignalPhase>('input');
-  const [signalInput,   setSignalInput]   = useState('');
+  const [ans1,          setAns1]          = useState('');
+  const [ans2,          setAns2]          = useState('');
+  const [ans3,          setAns3]          = useState('');
   const [statement,     setStatement]     = useState('');
   const [signalHistory, setSignalHistory] = useState<Msg[]>([]);
 
@@ -280,9 +282,11 @@ export default function RecordScreen({ onShowLog }: Props) {
   }
 
   function handleGenerate() {
-    const trimmed = signalInput.trim();
-    if (!trimmed) { Alert.alert('', 'Enter what you have already decided.'); return; }
-    callClaude([{ role: 'user', content: trimmed }]);
+    const a1 = ans1.trim(), a2 = ans2.trim(), a3 = ans3.trim();
+    if (!a1 || !a2 || !a3) { Alert.alert('', 'Please answer all three questions before generating.'); return; }
+    const content =
+      `What I'm working on or moving towards: ${a1}\n\nWhat keeps getting in the way: ${a2}\n\nWhat it would look like if that wasn't an issue: ${a3}`;
+    callClaude([{ role: 'user', content }]);
   }
 
   function handleSimplify() {
@@ -296,6 +300,7 @@ export default function RecordScreen({ onShowLog }: Props) {
     setSignalPhase('input');
     setStatement('');
     setSignalHistory([]);
+    setAns1(''); setAns2(''); setAns3('');
   }
 
   const recordLabel = isRecording
@@ -381,16 +386,37 @@ export default function RecordScreen({ onShowLog }: Props) {
 
           {signalPhase === 'input' && (
             <>
-              <Text style={s.label}>What have you already decided?</Text>
+              <Text style={s.label}>What are you working on or moving towards right now?</Text>
               <TextInput
-                value={signalInput}
-                onChangeText={setSignalInput}
+                value={ans1}
+                onChangeText={setAns1}
                 multiline
                 style={s.signalInput}
                 placeholderTextColor={C.secondary}
-                placeholder="I've decided to…"
+                placeholder="I'm moving towards…"
               />
-              <View style={{ marginTop: 24 }}>
+
+              <Text style={[s.label, { marginTop: 24 }]}>What keeps getting in the way?</Text>
+              <TextInput
+                value={ans2}
+                onChangeText={setAns2}
+                multiline
+                style={s.signalInput}
+                placeholderTextColor={C.secondary}
+                placeholder="What gets in the way is…"
+              />
+
+              <Text style={[s.label, { marginTop: 24 }]}>What would it look like if that wasn't an issue?</Text>
+              <TextInput
+                value={ans3}
+                onChangeText={setAns3}
+                multiline
+                style={s.signalInput}
+                placeholderTextColor={C.secondary}
+                placeholder="It would look like…"
+              />
+
+              <View style={{ marginTop: 28 }}>
                 <Btn label="Generate" onPress={handleGenerate} />
               </View>
               <TouchableOpacity onPress={() => setSignalPhase('direct')} style={s.skipWrap} activeOpacity={0.6}>
@@ -518,7 +544,7 @@ const s = StyleSheet.create({
     paddingVertical: 14,
     paddingHorizontal: 14,
     backgroundColor: C.inputBg,
-    minHeight: 110,
+    minHeight: 80,
     textAlignVertical: 'top',
   },
   skipWrap: {
