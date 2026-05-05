@@ -353,46 +353,7 @@ export default function RecordScreen({ onShowLog }: Props) {
           </View>
           <View style={s.rule} />
 
-          {/* ── Record ── */}
-          {signalPhase === 'result' && (
-            <>
-              <Text style={s.resultLabel}>Your signal</Text>
-              <Text style={s.resultStatement}>{'"'}{statement}{'"'}</Text>
-              <View style={{ height: 24 }} />
-            </>
-          )}
-          <Btn label={recordLabel} onPress={toggleRecording} />
-
-          {/* ── Schedule ── */}
-          <Text style={[s.label, { marginTop: 32 }]}>Sleep time</Text>
-          <TextInput
-            value={bedtime}
-            onChangeText={setBedtime}
-            keyboardType="numbers-and-punctuation"
-            placeholderTextColor={C.secondary}
-            style={s.input}
-          />
-
-          <Text style={[s.label, { marginTop: 20 }]}>Wake time</Text>
-          <TextInput
-            value={waketime}
-            onChangeText={setWaketime}
-            keyboardType="numbers-and-punctuation"
-            placeholderTextColor={C.secondary}
-            style={s.input}
-          />
-
-          <View style={{ marginTop: 32 }}>
-            <Btn label="Schedule Daily Playback" onPress={schedule} />
-          </View>
-          <View style={{ marginTop: 12 }}>
-            <Btn label="Stop Playback" onPress={stopPlayback} />
-          </View>
-
-          <Text style={s.status}>{status}</Text>
-
           {/* ── Before You Record ── */}
-          <View style={s.sectionRule} />
           <Text style={s.sectionHeading}>Before You Record</Text>
 
           {signalPhase === 'loading' && (
@@ -445,7 +406,9 @@ export default function RecordScreen({ onShowLog }: Props) {
 
           {signalPhase === 'result' && (
             <>
-              <View style={{ marginTop: 4 }}>
+              <Text style={s.resultLabel}>Your signal</Text>
+              <Text style={s.resultStatement}>{'"'}{statement}{'"'}</Text>
+              <View style={{ marginTop: 20 }}>
                 <Btn label="Make it simpler" onPress={handleSimplify} />
               </View>
               <View style={{ marginTop: 12 }}>
@@ -459,6 +422,38 @@ export default function RecordScreen({ onShowLog }: Props) {
               <Text style={s.skip}>Answer the questions to generate a statement instead.</Text>
             </TouchableOpacity>
           )}
+
+          {/* ── Record ── */}
+          <View style={s.sectionRule} />
+          <Btn label={recordLabel} onPress={toggleRecording} />
+
+          {/* ── Schedule ── */}
+          <Text style={[s.label, { marginTop: 32 }]}>Sleep time</Text>
+          <TextInput
+            value={bedtime}
+            onChangeText={setBedtime}
+            keyboardType="numbers-and-punctuation"
+            placeholderTextColor={C.secondary}
+            style={s.input}
+          />
+
+          <Text style={[s.label, { marginTop: 20 }]}>Wake time</Text>
+          <TextInput
+            value={waketime}
+            onChangeText={setWaketime}
+            keyboardType="numbers-and-punctuation"
+            placeholderTextColor={C.secondary}
+            style={s.input}
+          />
+
+          <View style={{ marginTop: 32 }}>
+            <Btn label="Schedule Daily Playback" onPress={schedule} />
+          </View>
+          <View style={{ marginTop: 12 }}>
+            <Btn label="Stop Playback" onPress={stopPlayback} />
+          </View>
+
+          <Text style={s.status}>{status}</Text>
 
         </ScrollView>
       </KeyboardAvoidingView>
@@ -509,7 +504,7 @@ const s = StyleSheet.create({
   sectionRule: {
     height: 1,
     backgroundColor: C.border,
-    marginTop: 48,
+    marginTop: 36,
     marginBottom: 32,
   },
   sectionHeading: {
