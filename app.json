@@ -3,9 +3,13 @@
     "name": "The Somni",
     "slug": "the-somni",
     "version": "1.0.0",
+    "runtimeVersion": {
+      "policy": "sdkVersion"
+    },
     "orientation": "portrait",
     "ios": {
       "bundleIdentifier": "com.thesomni.app",
+      "buildNumber": "1",
       "infoPlist": {
         "NSMicrophoneUsageDescription": "The Somni records audio for sleep and wake playback.",
         "UIBackgroundModes": ["audio", "fetch"]
