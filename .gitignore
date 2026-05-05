@@ -13,3 +13,4 @@ web-build/
 *.key
 *.mobileprovision
 .env
+ios/ 
