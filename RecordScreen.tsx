@@ -8,6 +8,7 @@ import { StatusBar } from 'expo-status-bar';
 import { Audio } from 'expo-av';
 import * as Notifications from 'expo-notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as FileSystem from 'expo-file-system';
 import Btn from './Btn';
 import { C } from './theme';
 import { LogEntry, LOG_KEY } from './types';
@@ -83,6 +84,11 @@ export default function RecordScreen({ onShowLog }: Props) {
         await soundRef.current.stopAsync().catch(() => {});
         await soundRef.current.unloadAsync().catch(() => {});
         soundRef.current = null;
+      }
+      const info = await FileSystem.getInfoAsync(uri).catch(() => ({ exists: false } as FileSystem.FileInfo));
+      if (!info.exists) {
+        setStatus('Recording not found — please re-record your intention.');
+        return;
       }
       await Audio.setAudioModeAsync({
         allowsRecordingIOS: false,
@@ -208,7 +214,9 @@ export default function RecordScreen({ onShowLog }: Props) {
         const uri = rec.getURI(); recordingRef.current = null;
         await Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true });
         if (uri) {
-          await AsyncStorage.setItem(REC_URI_KEY, uri);
+          const dest = `${FileSystem.documentDirectory}somni_recording.m4a`;
+          await FileSystem.copyAsync({ from: uri, to: dest });
+          await AsyncStorage.setItem(REC_URI_KEY, dest);
           setHasRecording(true);
           setStatus('Saved. Set your times above, then tap Schedule.');
           const entry: LogEntry = { id: Date.now().toString(), timestamp: Date.now(), text: statement };
@@ -345,8 +353,18 @@ export default function RecordScreen({ onShowLog }: Props) {
           </View>
           <View style={s.rule} />
 
+          {/* ── Record ── */}
+          {signalPhase === 'result' && (
+            <>
+              <Text style={s.resultLabel}>Your signal</Text>
+              <Text style={s.resultStatement}>{'"'}{statement}{'"'}</Text>
+              <View style={{ height: 24 }} />
+            </>
+          )}
+          <Btn label={recordLabel} onPress={toggleRecording} />
+
           {/* ── Schedule ── */}
-          <Text style={s.label}>Sleep time</Text>
+          <Text style={[s.label, { marginTop: 32 }]}>Sleep time</Text>
           <TextInput
             value={bedtime}
             onChangeText={setBedtime}
@@ -427,27 +445,19 @@ export default function RecordScreen({ onShowLog }: Props) {
 
           {signalPhase === 'result' && (
             <>
-              <Text style={s.resultLabel}>Your signal</Text>
-              <Text style={s.resultStatement}>{'"'}{statement}{'"'}</Text>
+              <View style={{ marginTop: 4 }}>
+                <Btn label="Make it simpler" onPress={handleSimplify} />
+              </View>
+              <View style={{ marginTop: 12 }}>
+                <Btn label="Try again" onPress={handleTryAgain} />
+              </View>
             </>
           )}
 
-          {(signalPhase === 'result' || signalPhase === 'direct') && (
-            <>
-              <View style={{ marginTop: signalPhase === 'result' ? 32 : 0 }}>
-                <Btn label={recordLabel} onPress={toggleRecording} />
-              </View>
-              {signalPhase === 'result' && (
-                <>
-                  <View style={{ marginTop: 12 }}>
-                    <Btn label="Make it simpler" onPress={handleSimplify} />
-                  </View>
-                  <View style={{ marginTop: 12 }}>
-                    <Btn label="Try again" onPress={handleTryAgain} />
-                  </View>
-                </>
-              )}
-            </>
+          {signalPhase === 'direct' && (
+            <TouchableOpacity onPress={() => setSignalPhase('input')} style={s.skipWrap} activeOpacity={0.6}>
+              <Text style={s.skip}>Answer the questions to generate a statement instead.</Text>
+            </TouchableOpacity>
           )}
 
         </ScrollView>
