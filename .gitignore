@@ -1,6 +1,8 @@
 node_modules/
 .expo/
-ios/
+ios/Pods/
+ios/.xcode.env.local
+ios/build/
 android/
 dist/
 web-build/
