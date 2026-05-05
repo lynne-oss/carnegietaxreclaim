@@ -7,14 +7,12 @@
     "preview": {
       "distribution": "internal",
       "ios": {
-        "image": "macos-sequoia-15.2-xcode-16.2",
         "simulator": false,
         "credentialsSource": "remote"
       }
     },
     "production": {
       "ios": {
-        "image": "macos-sequoia-15.2-xcode-16.2",
         "simulator": false,
         "credentialsSource": "remote"
       }

@@ -5,7 +5,14 @@ import {
   KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { Audio } from 'expo-av';
+import {
+  useAudioPlayer,
+  useAudioRecorder,
+  useAudioPlayerStatus,
+  setAudioModeAsync,
+  requestRecordingPermissionsAsync,
+  RecordingPresets,
+} from 'expo-audio';
 import * as Notifications from 'expo-notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system';
@@ -61,8 +68,10 @@ export default function RecordScreen({ onShowLog }: Props) {
   const [statement,     setStatement]     = useState('');
   const [signalHistory, setSignalHistory] = useState<Msg[]>([]);
 
-  const recordingRef  = useRef<Audio.Recording | null>(null);
-  const soundRef      = useRef<Audio.Sound | null>(null);
+  const recorder     = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  const player       = useAudioPlayer(null);
+  const playerStatus = useAudioPlayerStatus(player);
+
   const genRef        = useRef(0);
   const sleepTimer    = useRef<ReturnType<typeof setTimeout>  | null>(null);
   const fadeTimer     = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -74,55 +83,48 @@ export default function RecordScreen({ onShowLog }: Props) {
     if (fadeTimer.current)  { clearInterval(fadeTimer.current);  fadeTimer.current  = null; }
   }
 
+  // Loop restart: when track finishes, wait 10 s then replay
+  useEffect(() => {
+    if (!playerStatus.didJustFinish || isFading.current) return;
+    const gen = genRef.current;
+    setTimeout(() => {
+      if (gen !== genRef.current || isFading.current) return;
+      player.seekTo(0);
+      player.play();
+    }, 10_000);
+  }, [playerStatus.didJustFinish, player]);
+
   const startLoop = useCallback(async (uri: string, type: 'bedtime' | 'waketime') => {
     const gen = ++genRef.current;
     isFading.current = false;
     clearFadeTimers();
     try {
-      if (soundRef.current) {
-        soundRef.current.setOnPlaybackStatusUpdate(null);
-        await soundRef.current.stopAsync().catch(() => {});
-        await soundRef.current.unloadAsync().catch(() => {});
-        soundRef.current = null;
-      }
+      player.pause();
       const info = await FileSystem.getInfoAsync(uri).catch(() => ({ exists: false } as FileSystem.FileInfo));
       if (!info.exists) {
         setStatus('Recording not found — please re-record your intention.');
         return;
       }
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: false,
-        playsInSilentModeIOS: true,
+      await setAudioModeAsync({
+        allowsRecording: false,
+        playsInSilentMode: true,
         staysActiveInBackground: true,
       });
-      const startVolume = type === 'waketime' ? 0 : 1;
-      const { sound } = await Audio.Sound.createAsync(
-        { uri },
-        { shouldPlay: true, isLooping: false, volume: startVolume },
-      );
-      if (gen !== genRef.current) { await sound.unloadAsync().catch(() => {}); return; }
-      soundRef.current = sound;
+      if (gen !== genRef.current) return;
+      player.volume = type === 'waketime' ? 0 : 1;
+      player.replace({ uri });
+      player.play();
       setIsPlaying(true);
       if (type === 'waketime') setIsWakePlaying(true);
-
-      // Manual loop: play → 10 s silence → play → repeat
-      sound.setOnPlaybackStatusUpdate((ps) => {
-        if (!ps.isLoaded || !ps.didJustFinish) return;
-        if (gen !== genRef.current || isFading.current) return;
-        setTimeout(async () => {
-          if (gen !== genRef.current || isFading.current) return;
-          await soundRef.current?.replayAsync().catch(() => {});
-        }, 10_000);
-      });
 
       if (type === 'waketime') {
         const steps = WAKE_FADE_MS / WAKE_FADE_STEP;
         let step = 0;
         setStatus('Waking gently...');
-        fadeTimer.current = setInterval(async () => {
+        fadeTimer.current = setInterval(() => {
           if (gen !== genRef.current) { clearInterval(fadeTimer.current!); return; }
           step++;
-          await soundRef.current?.setVolumeAsync(Math.min(step / steps, 1)).catch(() => {});
+          player.volume = Math.min(step / steps, 1);
           if (step >= steps) { clearInterval(fadeTimer.current!); fadeTimer.current = null; setStatus('Playing on loop...'); }
         }, WAKE_FADE_STEP);
       } else {
@@ -133,15 +135,13 @@ export default function RecordScreen({ onShowLog }: Props) {
           isFading.current = true;
           const steps = SLEEP_FADE_MS / SLEEP_FADE_STEP;
           let step = 0;
-          fadeTimer.current = setInterval(async () => {
+          fadeTimer.current = setInterval(() => {
             if (gen !== genRef.current) { clearInterval(fadeTimer.current!); return; }
             step++;
-            await soundRef.current?.setVolumeAsync(Math.max(1 - step / steps, 0)).catch(() => {});
+            player.volume = Math.max(1 - step / steps, 0);
             if (step >= steps) {
               clearInterval(fadeTimer.current!); fadeTimer.current = null;
-              const snd = soundRef.current; soundRef.current = null;
-              snd?.setOnPlaybackStatusUpdate(null);
-              await snd?.stopAsync().catch(() => {}); await snd?.unloadAsync().catch(() => {});
+              player.pause();
               isFading.current = false;
               setIsPlaying(false); setStatus('Faded out. Sleep well.');
             }
@@ -151,18 +151,13 @@ export default function RecordScreen({ onShowLog }: Props) {
     } catch {
       setStatus('Playback error — re-record and try again.');
     }
-  }, []);
+  }, [player]);
 
   async function stopPlayback() {
     genRef.current++;
     isFading.current = false;
     clearFadeTimers();
-    const snd = soundRef.current; soundRef.current = null;
-    if (snd) {
-      snd.setOnPlaybackStatusUpdate(null);
-      await snd.stopAsync().catch(() => {});
-      await snd.unloadAsync().catch(() => {});
-    }
+    player.pause();
     setIsPlaying(false);
     setIsWakePlaying(false);
     setStatus('Stopped.');
@@ -171,10 +166,10 @@ export default function RecordScreen({ onShowLog }: Props) {
   useEffect(() => {
     let timer: ReturnType<typeof setInterval>;
     (async () => {
-      await Audio.requestPermissionsAsync();
+      await requestRecordingPermissionsAsync();
       const { granted } = await Notifications.requestPermissionsAsync();
       if (!granted) Alert.alert('Notifications disabled', 'Enable notifications for The Somni in iOS Settings.');
-      await Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true, staysActiveInBackground: true });
+      await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true, staysActiveInBackground: true });
       const [savedUri, savedBed, savedWake] = await Promise.all([
         AsyncStorage.getItem(REC_URI_KEY), AsyncStorage.getItem(BEDTIME_KEY), AsyncStorage.getItem(WAKETIME_KEY),
       ]);
@@ -203,16 +198,15 @@ export default function RecordScreen({ onShowLog }: Props) {
       const t = resp.notification.request.content.data?.type as 'bedtime' | 'waketime' | undefined;
       if (t === 'bedtime' || t === 'waketime') { const uri = await AsyncStorage.getItem(REC_URI_KEY); if (uri) startLoop(uri, t); }
     });
-    return () => { clearInterval(timer); clearFadeTimers(); onReceive.remove(); onResponse.remove(); soundRef.current?.unloadAsync().catch(() => {}); };
-  }, [startLoop]);
+    return () => { clearInterval(timer); clearFadeTimers(); onReceive.remove(); onResponse.remove(); player.pause(); };
+  }, [startLoop, player]);
 
   async function toggleRecording() {
     if (isRecording) {
-      const rec = recordingRef.current; if (!rec) return;
       try {
-        await rec.stopAndUnloadAsync();
-        const uri = rec.getURI(); recordingRef.current = null;
-        await Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true });
+        await recorder.stop();
+        const uri = recorder.uri;
+        await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true });
         if (uri) {
           const dest = `${FileSystem.documentDirectory}somni_recording.m4a`;
           await FileSystem.copyAsync({ from: uri, to: dest });
@@ -228,9 +222,15 @@ export default function RecordScreen({ onShowLog }: Props) {
       setIsRecording(false);
     } else {
       try {
-        await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
-        const { recording } = await Audio.Recording.createAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
-        recordingRef.current = recording; setIsRecording(true); setStatus('Recording...');
+        const { granted } = await requestRecordingPermissionsAsync();
+        if (!granted) {
+          Alert.alert('Microphone permission required', 'Enable microphone access in iOS Settings.');
+          return;
+        }
+        await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+        await recorder.record();
+        setIsRecording(true);
+        setStatus('Recording...');
       } catch { Alert.alert('Microphone error', 'Could not start recording. Check microphone permission in iOS Settings.'); }
     }
   }
