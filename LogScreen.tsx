@@ -26,7 +26,11 @@ export default function LogScreen({ onBack }: Props) {
 
   useEffect(() => {
     AsyncStorage.getItem(LOG_KEY)
-      .then(raw => { if (raw) setEntries(JSON.parse(raw)); })
+      .then(raw => {
+        if (!raw) return;
+        const parsed = JSON.parse(raw);
+        setEntries(Array.isArray(parsed) ? parsed : []);
+      })
       .catch(() => {});
   }, []);
 

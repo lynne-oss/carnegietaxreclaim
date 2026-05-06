@@ -9,6 +9,7 @@ import {
   useAudioPlayer,
   useAudioRecorder,
   useAudioPlayerStatus,
+  useAudioRecorderState,
   setAudioModeAsync,
   requestRecordingPermissionsAsync,
   RecordingPresets,
@@ -68,9 +69,10 @@ export default function RecordScreen({ onShowLog }: Props) {
   const [statement,     setStatement]     = useState('');
   const [signalHistory, setSignalHistory] = useState<Msg[]>([]);
 
-  const recorder     = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
-  const player       = useAudioPlayer(null);
-  const playerStatus = useAudioPlayerStatus(player);
+  const recorder      = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  const recorderState = useAudioRecorderState(recorder);
+  const player        = useAudioPlayer(null);
+  const playerStatus  = useAudioPlayerStatus(player);
 
   const genRef        = useRef(0);
   const sleepTimer    = useRef<ReturnType<typeof setTimeout>  | null>(null);
@@ -165,30 +167,40 @@ export default function RecordScreen({ onShowLog }: Props) {
 
   useEffect(() => {
     let timer: ReturnType<typeof setInterval>;
+    const mounted = { current: true };
     (async () => {
-      await requestRecordingPermissionsAsync();
-      const { granted } = await Notifications.requestPermissionsAsync();
-      if (!granted) Alert.alert('Notifications disabled', 'Enable notifications for The Somni in iOS Settings.');
-      await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true, staysActiveInBackground: true });
-      const [savedUri, savedBed, savedWake] = await Promise.all([
-        AsyncStorage.getItem(REC_URI_KEY), AsyncStorage.getItem(BEDTIME_KEY), AsyncStorage.getItem(WAKETIME_KEY),
-      ]);
-      if (savedUri) { setHasRecording(true); setStatus('Recording loaded. Ready to schedule.'); }
-      if (savedBed)  setBedtime(savedBed);
-      if (savedWake) setWaketime(savedWake);
-      const lastResponse = await Notifications.getLastNotificationResponseAsync();
-      const launchType = lastResponse?.notification.request.content.data?.type as 'bedtime' | 'waketime' | undefined;
-      if ((launchType === 'bedtime' || launchType === 'waketime') && savedUri) startLoop(savedUri, launchType);
-      timer = setInterval(async () => {
-        const now  = new Date();
-        const hhmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-        if (lastPlayedRef.current === hhmm) return;
-        const [uri, bed, wake] = await Promise.all([
+      try {
+        await requestRecordingPermissionsAsync();
+        const { granted } = await Notifications.requestPermissionsAsync();
+        if (!mounted.current) return;
+        if (!granted) Alert.alert('Notifications disabled', 'Enable notifications for The Somni in iOS Settings.');
+        await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true, staysActiveInBackground: true });
+        const [savedUri, savedBed, savedWake] = await Promise.all([
           AsyncStorage.getItem(REC_URI_KEY), AsyncStorage.getItem(BEDTIME_KEY), AsyncStorage.getItem(WAKETIME_KEY),
         ]);
-        if (uri && hhmm === bed)  { lastPlayedRef.current = hhmm; startLoop(uri, 'bedtime');  }
-        if (uri && hhmm === wake) { lastPlayedRef.current = hhmm; startLoop(uri, 'waketime'); }
-      }, 30_000);
+        if (!mounted.current) return;
+        if (savedUri) { setHasRecording(true); setStatus('Recording loaded. Ready to schedule.'); }
+        if (savedBed)  setBedtime(savedBed);
+        if (savedWake) setWaketime(savedWake);
+        const lastResponse = await Notifications.getLastNotificationResponseAsync();
+        if (!mounted.current) return;
+        const launchType = lastResponse?.notification.request.content.data?.type as 'bedtime' | 'waketime' | undefined;
+        if ((launchType === 'bedtime' || launchType === 'waketime') && savedUri) startLoop(savedUri, launchType);
+        timer = setInterval(async () => {
+          if (!mounted.current) return;
+          try {
+            const now  = new Date();
+            const hhmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+            if (lastPlayedRef.current === hhmm) return;
+            const [uri, bed, wake] = await Promise.all([
+              AsyncStorage.getItem(REC_URI_KEY), AsyncStorage.getItem(BEDTIME_KEY), AsyncStorage.getItem(WAKETIME_KEY),
+            ]);
+            if (!mounted.current) return;
+            if (uri && hhmm === bed)  { lastPlayedRef.current = hhmm; startLoop(uri, 'bedtime');  }
+            if (uri && hhmm === wake) { lastPlayedRef.current = hhmm; startLoop(uri, 'waketime'); }
+          } catch {}
+        }, 30_000);
+      } catch {}
     })();
     const onReceive = Notifications.addNotificationReceivedListener(async (notif) => {
       const t = notif.request.content.data?.type as 'bedtime' | 'waketime' | undefined;
@@ -198,7 +210,7 @@ export default function RecordScreen({ onShowLog }: Props) {
       const t = resp.notification.request.content.data?.type as 'bedtime' | 'waketime' | undefined;
       if (t === 'bedtime' || t === 'waketime') { const uri = await AsyncStorage.getItem(REC_URI_KEY); if (uri) startLoop(uri, t); }
     });
-    return () => { clearInterval(timer); clearFadeTimers(); onReceive.remove(); onResponse.remove(); player.pause(); };
+    return () => { mounted.current = false; clearInterval(timer); clearFadeTimers(); onReceive.remove(); onResponse.remove(); player.pause(); };
   }, [startLoop, player]);
 
   async function toggleRecording() {
@@ -228,7 +240,8 @@ export default function RecordScreen({ onShowLog }: Props) {
           return;
         }
         await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
-        await recorder.record();
+        await recorder.prepareToRecordAsync();
+        recorder.record();
         setIsRecording(true);
         setStatus('Recording...');
       } catch { Alert.alert('Microphone error', 'Could not start recording. Check microphone permission in iOS Settings.'); }
@@ -453,7 +466,11 @@ export default function RecordScreen({ onShowLog }: Props) {
             <Btn label="Stop Playback" onPress={stopPlayback} />
           </View>
 
-          <Text style={s.status}>{status}</Text>
+          <Text style={s.status}>
+            {isRecording && (recorderState.durationMillis ?? 0) > 0
+              ? `Recording... ${Math.floor((recorderState.durationMillis ?? 0) / 1000)}s`
+              : status}
+          </Text>
 
         </ScrollView>
       </KeyboardAvoidingView>
@@ -521,7 +538,7 @@ const s = StyleSheet.create({
     fontWeight: '300',
     fontSize: 11,
     color: C.secondary,
-    letterSpacing: 2,
+    letterSpacing: 1,
     textTransform: 'uppercase',
     marginBottom: 8,
     marginTop: 4,
