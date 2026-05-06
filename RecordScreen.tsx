@@ -31,14 +31,9 @@ const REC_URI_KEY  = '@somni_rec';
 const BEDTIME_KEY  = '@somni_bed';
 const WAKETIME_KEY = '@somni_wake';
 
-const SYSTEM_PROMPT =
-  `You are the Somni Decision Engine. Your job is to convert a user's input into a short direct statement they will record in their own voice. This statement represents a decision they have already made not a future intention. Use present tense only. Remove all future tense. Remove vague words like more better improve successful aligned abundant. Do not generate motivational affirmational or inspirational language. Do not invent identity claims. Anchor everything in observable behaviour. Keep output under 2 sentences. Output must be something a person can say naturally without overthinking. Output only the final statement. No explanation. If user input includes abundant manifest universe attract energy alignment remove those concepts completely and translate into behaviour. Return ONLY the final statement. No preamble no explanation no formatting.`;
-
-const API_URL = 'https://api.anthropic.com/v1/messages';
-const MODEL   = 'claude-haiku-4-5-20251001';
+const NETLIFY_URL = 'https://thesomni.app/.netlify/functions/generate-intention';
 
 type SignalPhase = 'input' | 'loading' | 'result' | 'direct';
-type Msg = { role: 'user' | 'assistant'; content: string };
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -67,7 +62,6 @@ export default function RecordScreen({ onShowLog }: Props) {
   const [ans2,          setAns2]          = useState('');
   const [ans3,          setAns3]          = useState('');
   const [statement,     setStatement]     = useState('');
-  const [signalHistory, setSignalHistory] = useState<Msg[]>([]);
 
   const recorder      = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const recorderState = useAudioRecorderState(recorder);
@@ -282,31 +276,17 @@ export default function RecordScreen({ onShowLog }: Props) {
     Alert.alert('Scheduled', `Sleep ${bedtime}: plays 30 min then fades out.\nWake ${waketime}: fades in over 30 s.`);
   }
 
-  async function callClaude(msgs: Msg[]) {
-    const apiKey = process.env.EXPO_PUBLIC_ANTHROPIC_API_KEY ?? '';
-    if (!apiKey) {
-      Alert.alert(
-        'API key missing',
-        'Create a .env file in the project root with:\n\nEXPO_PUBLIC_ANTHROPIC_API_KEY=sk-ant-...\n\nThen restart Expo with --clear.',
-      );
-      return;
-    }
+  async function callNetlify(a1: string, a2: string, a3: string) {
     setSignalPhase('loading');
     try {
-      const res = await fetch(API_URL, {
+      const res = await fetch(NETLIFY_URL, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01',
-        },
-        body: JSON.stringify({ model: MODEL, max_tokens: 150, system: SYSTEM_PROMPT, messages: msgs }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ answer1: a1, answer2: a2, answer3: a3 }),
       });
-      if (!res.ok) throw new Error(`API error ${res.status}: ${await res.text()}`);
+      if (!res.ok) throw new Error(`Server error ${res.status}: ${await res.text()}`);
       const data = await res.json();
-      const text = (data.content[0].text as string).trim();
-      const updated: Msg[] = [...msgs, { role: 'assistant', content: text }];
-      setSignalHistory(updated);
+      const text = (data.intention as string).trim();
       setStatement(text);
       setSignalPhase('result');
     } catch (e: any) {
@@ -318,22 +298,16 @@ export default function RecordScreen({ onShowLog }: Props) {
   function handleGenerate() {
     const a1 = ans1.trim(), a2 = ans2.trim(), a3 = ans3.trim();
     if (!a1 || !a2 || !a3) { Alert.alert('', 'Please answer all three questions before generating.'); return; }
-    const content =
-      `What I'm working on or moving towards: ${a1}\n\nWhat keeps getting in the way: ${a2}\n\nWhat it would look like if that wasn't an issue: ${a3}`;
-    callClaude([{ role: 'user', content }]);
+    callNetlify(a1, a2, a3);
   }
 
   function handleSimplify() {
-    callClaude([...signalHistory, {
-      role: 'user',
-      content: 'Simplify further. Shorter. More direct. Higher certainty. Under one sentence.',
-    }]);
+    callNetlify(ans1.trim(), ans2.trim(), ans3.trim());
   }
 
   function handleTryAgain() {
     setSignalPhase('input');
     setStatement('');
-    setSignalHistory([]);
     setAns1(''); setAns2(''); setAns3('');
   }
 
