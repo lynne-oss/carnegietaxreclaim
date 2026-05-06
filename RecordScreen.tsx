@@ -203,12 +203,16 @@ export default function RecordScreen({ onShowLog }: Props) {
       } catch {}
     })();
     const onReceive = Notifications.addNotificationReceivedListener(async (notif) => {
-      const t = notif.request.content.data?.type as 'bedtime' | 'waketime' | undefined;
-      if (t === 'bedtime' || t === 'waketime') { const uri = await AsyncStorage.getItem(REC_URI_KEY); if (uri) startLoop(uri, t); }
+      try {
+        const t = notif.request.content.data?.type as 'bedtime' | 'waketime' | undefined;
+        if (t === 'bedtime' || t === 'waketime') { const uri = await AsyncStorage.getItem(REC_URI_KEY); if (uri) startLoop(uri, t); }
+      } catch {}
     });
     const onResponse = Notifications.addNotificationResponseReceivedListener(async (resp) => {
-      const t = resp.notification.request.content.data?.type as 'bedtime' | 'waketime' | undefined;
-      if (t === 'bedtime' || t === 'waketime') { const uri = await AsyncStorage.getItem(REC_URI_KEY); if (uri) startLoop(uri, t); }
+      try {
+        const t = resp.notification.request.content.data?.type as 'bedtime' | 'waketime' | undefined;
+        if (t === 'bedtime' || t === 'waketime') { const uri = await AsyncStorage.getItem(REC_URI_KEY); if (uri) startLoop(uri, t); }
+      } catch {}
     });
     return () => { mounted.current = false; clearInterval(timer); clearFadeTimers(); onReceive.remove(); onResponse.remove(); player.pause(); };
   }, [startLoop, player]);
@@ -234,17 +238,26 @@ export default function RecordScreen({ onShowLog }: Props) {
       setIsRecording(false);
     } else {
       try {
+        setStatus('Checking microphone permission...');
         const { granted } = await requestRecordingPermissionsAsync();
         if (!granted) {
-          Alert.alert('Microphone permission required', 'Enable microphone access in iOS Settings.');
+          Alert.alert('Microphone access required', 'Go to iOS Settings → Privacy & Security → Microphone and enable The Somni.');
+          setStatus('Microphone permission not granted.');
           return;
         }
+        setStatus('Configuring audio session...');
         await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+        setStatus('Preparing recorder...');
         await recorder.prepareToRecordAsync();
+        setStatus('Starting...');
         recorder.record();
         setIsRecording(true);
         setStatus('Recording...');
-      } catch { Alert.alert('Microphone error', 'Could not start recording. Check microphone permission in iOS Settings.'); }
+      } catch (e: any) {
+        const msg = (e?.message ?? String(e)) || 'Unknown error';
+        Alert.alert('Recording failed', msg);
+        setStatus(`Recording error: ${msg}`);
+      }
     }
   }
 
