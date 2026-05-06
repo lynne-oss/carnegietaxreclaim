@@ -9,10 +9,16 @@
     "orientation": "portrait",
     "ios": {
       "bundleIdentifier": "com.thesomni.app",
-      "buildNumber": "1",
+      "buildNumber": "12",
       "infoPlist": {
         "NSMicrophoneUsageDescription": "The Somni records audio for sleep and wake playback.",
-        "UIBackgroundModes": ["audio", "fetch"]
+        "UIBackgroundModes": [
+          "audio",
+          "fetch",
+          "audio",
+          "fetch"
+        ],
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
@@ -26,6 +32,11 @@
     "plugins": [
       "expo-notifications",
       "./plugins/withFixedAppDelegate"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "7c0a6825-d0a8-4c7b-9e9d-28505bceba60"
+      }
+    }
   }
 }
