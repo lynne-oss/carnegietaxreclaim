@@ -207,7 +207,7 @@ export default function RecordScreen({ onShowLog }: Props) {
         if (t === 'bedtime' || t === 'waketime') { const uri = await AsyncStorage.getItem(REC_URI_KEY); if (uri) startLoop(uri, t); }
       } catch {}
     });
-    return () => { mounted.current = false; clearInterval(timer); clearFadeTimers(); onReceive.remove(); onResponse.remove(); player.pause(); };
+    return () => { mounted.current = false; clearInterval(timer); clearFadeTimers(); onReceive.remove(); onResponse.remove(); };
   }, [startLoop, player]);
 
   async function toggleRecording() {
