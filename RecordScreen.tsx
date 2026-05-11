@@ -16,7 +16,7 @@ import {
 } from 'expo-audio';
 import * as Notifications from 'expo-notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as FileSystem from 'expo-file-system';
+import { File as EXFile, Paths } from 'expo-file-system';
 import Btn from './Btn';
 import { C } from './theme';
 import { LogEntry, LOG_KEY } from './types';
@@ -96,8 +96,7 @@ export default function RecordScreen({ onShowLog }: Props) {
     clearFadeTimers();
     try {
       player.pause();
-      const info = await FileSystem.getInfoAsync(uri).catch(() => ({ exists: false } as FileSystem.FileInfo));
-      if (!info.exists) {
+      if (!new EXFile(uri).exists) {
         setStatus('Recording not found — please re-record your intention.');
         return;
       }
@@ -222,9 +221,9 @@ export default function RecordScreen({ onShowLog }: Props) {
           setStatus('Recording failed — no file produced.');
           return;
         }
-        const dest = `${FileSystem.documentDirectory}somni_recording.m4a`;
-        await FileSystem.copyAsync({ from: uri, to: dest });
-        await AsyncStorage.setItem(REC_URI_KEY, dest);
+        const destFile = new EXFile(Paths.document, 'somni_recording.m4a');
+        new EXFile(uri).copy(destFile);
+        await AsyncStorage.setItem(REC_URI_KEY, destFile.uri);
         setHasRecording(true);
         setStatus('Saved. Set your times above, then tap Schedule.');
         const entry: LogEntry = { id: Date.now().toString(), timestamp: Date.now(), text: statement };
