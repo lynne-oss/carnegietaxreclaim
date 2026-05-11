@@ -11,10 +11,15 @@ const DARK  = '#0B0B0D';
 const MID   = '#7A7068';
 const RULE  = '#D8D2C8';
 
+const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+
 function formatDate(ts: number): string {
-  return new Date(ts).toLocaleDateString('en-GB', {
-    day: 'numeric', month: 'long', year: 'numeric',
-  });
+  try {
+    const d = new Date(ts);
+    return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+  } catch {
+    return '';
+  }
 }
 
 interface Props {
@@ -52,7 +57,7 @@ export default function LogScreen({ onBack }: Props) {
         {entries.length === 0 ? (
           <Text style={s.empty}>No intentions recorded yet.</Text>
         ) : (
-          entries.map((entry, i) => (
+          entries.filter(Boolean).map((entry, i) => (
             <View key={entry.id}>
               <View style={s.entry}>
                 <Text style={s.entryDate}>{formatDate(entry.timestamp)}</Text>
