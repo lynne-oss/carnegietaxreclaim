@@ -213,23 +213,32 @@ export default function RecordScreen({ onShowLog }: Props) {
 
   async function toggleRecording() {
     if (isRecording) {
+      setIsRecording(false);
       try {
         await recorder.stop();
         const uri = recorder.uri;
-        await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true });
-        if (uri) {
-          const dest = `${FileSystem.documentDirectory}somni_recording.m4a`;
-          await FileSystem.copyAsync({ from: uri, to: dest });
-          await AsyncStorage.setItem(REC_URI_KEY, dest);
-          setHasRecording(true);
-          setStatus('Saved. Set your times above, then tap Schedule.');
-          const entry: LogEntry = { id: Date.now().toString(), timestamp: Date.now(), text: statement };
-          const raw = await AsyncStorage.getItem(LOG_KEY).catch(() => null);
-          const existing: LogEntry[] = raw ? JSON.parse(raw) : [];
-          await AsyncStorage.setItem(LOG_KEY, JSON.stringify([entry, ...existing])).catch(() => {});
+        if (!uri) {
+          Alert.alert('Recording failed', 'No audio file was produced. Please try again.');
+          setStatus('Recording failed — no file produced.');
+          return;
         }
-      } catch { setStatus('Error stopping recording — try again.'); }
-      setIsRecording(false);
+        const dest = `${FileSystem.documentDirectory}somni_recording.m4a`;
+        await FileSystem.copyAsync({ from: uri, to: dest });
+        await AsyncStorage.setItem(REC_URI_KEY, dest);
+        setHasRecording(true);
+        setStatus('Saved. Set your times above, then tap Schedule.');
+        const entry: LogEntry = { id: Date.now().toString(), timestamp: Date.now(), text: statement };
+        const raw = await AsyncStorage.getItem(LOG_KEY).catch(() => null);
+        const existing: LogEntry[] = raw ? JSON.parse(raw) : [];
+        await AsyncStorage.setItem(LOG_KEY, JSON.stringify([entry, ...existing])).catch(() => {});
+      } catch (e: any) {
+        const msg = e?.message ?? String(e) ?? 'Unknown error';
+        Alert.alert('Save failed', msg);
+        setStatus(`Save error: ${msg}`);
+      } finally {
+        // Reset audio session after file is safely saved (or on failure), never before.
+        setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => {});
+      }
     } else {
       try {
         setStatus('Checking microphone permission...');
