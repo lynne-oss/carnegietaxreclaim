@@ -222,6 +222,7 @@ export default function RecordScreen({ onShowLog }: Props) {
           return;
         }
         const destFile = new EXFile(Paths.document, 'somni_recording.m4a');
+        if (destFile.exists) destFile.delete();
         new EXFile(uri).copy(destFile);
         await AsyncStorage.setItem(REC_URI_KEY, destFile.uri);
         setHasRecording(true);
