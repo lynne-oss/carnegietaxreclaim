@@ -9,12 +9,10 @@
     "orientation": "portrait",
     "ios": {
       "bundleIdentifier": "com.thesomni.app",
-      "buildNumber": "12",
+      "buildNumber": "15",
       "infoPlist": {
         "NSMicrophoneUsageDescription": "The Somni records audio for sleep and wake playback.",
         "UIBackgroundModes": [
-          "audio",
-          "fetch",
           "audio",
           "fetch"
         ],
