@@ -253,8 +253,7 @@ export default function RecordScreen({ onShowLog }: Props) {
         Alert.alert('Save failed', msg);
         setStatus(`Save error: ${msg}`);
       } finally {
-        // Reset audio session after file is safely saved (or on failure), never before.
-        setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => {});
+        setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true, shouldPlayInBackground: true, interruptionMode: 'doNotMix' }).catch(() => {});
       }
     } else {
       try {
