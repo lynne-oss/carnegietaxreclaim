@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, ScrollView,
   SafeAreaView, StyleSheet, Alert, ActivityIndicator,
-  KeyboardAvoidingView, Platform,
+  KeyboardAvoidingView, Platform, AppState,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import {
@@ -27,6 +27,7 @@ const SLEEP_FADE_STEP = 500;
 const WAKE_FADE_MS    = 10 * 60 * 1000;
 const WAKE_FADE_STEP  = 100;
 const PREWAKE_LEAD_MIN = 10;
+const GAP_BETWEEN_LOOPS_MS = 10_000;
 
 const REC_URI_KEY  = '@somni_rec';
 const BEDTIME_KEY  = '@somni_bed';
@@ -86,6 +87,7 @@ export default function RecordScreen({ onShowLog }: Props) {
   const lastPlayedRef    = useRef('');
   const isFading         = useRef(false);
   const isWakePlayingRef = useRef(false);
+  const loopTypeRef      = useRef<'bedtime' | 'waketime' | null>(null);
 
   function clearFadeTimers() {
     if (sleepTimer.current) { clearTimeout(sleepTimer.current);  sleepTimer.current = null; }
@@ -96,6 +98,7 @@ export default function RecordScreen({ onShowLog }: Props) {
     const gen = ++genRef.current;
     isFading.current = false;
     clearFadeTimers();
+    loopTypeRef.current = null;
     try {
       player.loop = false;
       player.pause();
@@ -103,17 +106,17 @@ export default function RecordScreen({ onShowLog }: Props) {
         setStatus('Recording not found — please re-record your intention.');
         return;
       }
-      await setAudioModeAsync({
-        allowsRecording: false,
-        playsInSilentMode: true,
-        shouldPlayInBackground: true,
-        interruptionMode: 'doNotMix',
-      });
+      const modeArgs = { allowsRecording: false, playsInSilentMode: true, shouldPlayInBackground: true, interruptionMode: 'doNotMix' as const };
+      console.log('[Somni] setAudioModeAsync (startLoop/' + type + '):', JSON.stringify(modeArgs));
+      await setAudioModeAsync(modeArgs);
       if (gen !== genRef.current) return;
       player.volume = type === 'waketime' ? 0 : 1;
       player.replace({ uri });
-      player.loop = true;
+      // waketime: native gapless loop during fade-in; bedtime: JS loop with 10 s gap
+      player.loop = type === 'waketime';
+      loopTypeRef.current = type;
       player.play();
+      console.log('[Somni] player.play() called — type:', type, 'loop:', player.loop, 'volume:', player.volume);
       setIsPlaying(true);
       if (type === 'waketime') { setIsWakePlaying(true); isWakePlayingRef.current = true; }
 
@@ -141,8 +144,8 @@ export default function RecordScreen({ onShowLog }: Props) {
             player.volume = Math.max(1 - step / steps, 0);
             if (step >= steps) {
               clearInterval(fadeTimer.current!); fadeTimer.current = null;
-              // Drop to barely-audible volume to keep the iOS audio session alive all night
-              // (player.loop=true was set at playback start; native Swift observer handles restart)
+              // Barely-audible volume keeps the iOS audio session alive all night;
+              // JS gap-loop useEffect handles restarts with 10 s gaps.
               player.volume = 0.05;
               isFading.current = false;
               setIsPlaying(false); setStatus('Faded out. Sleep well.');
@@ -156,9 +159,11 @@ export default function RecordScreen({ onShowLog }: Props) {
   }, [player]);
 
   async function stopPlayback() {
+    console.log('[Somni] stopPlayback called');
     genRef.current++;
     isFading.current = false;
     clearFadeTimers();
+    loopTypeRef.current = null;
     player.loop = false;
     player.pause();
     setIsPlaying(false);
@@ -176,7 +181,9 @@ export default function RecordScreen({ onShowLog }: Props) {
         const { granted } = await Notifications.requestPermissionsAsync();
         if (!mounted.current) return;
         if (!granted) Alert.alert('Notifications disabled', 'Enable notifications for The Somni in iOS Settings.');
-        await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true, shouldPlayInBackground: true, interruptionMode: 'doNotMix' });
+        const initMode = { allowsRecording: false, playsInSilentMode: true, shouldPlayInBackground: true, interruptionMode: 'doNotMix' as const };
+        console.log('[Somni] setAudioModeAsync (mount init):', JSON.stringify(initMode));
+        await setAudioModeAsync(initMode);
         const [savedUri, savedBed, savedWake, savedStatement] = await Promise.all([
           AsyncStorage.getItem(REC_URI_KEY), AsyncStorage.getItem(BEDTIME_KEY), AsyncStorage.getItem(WAKETIME_KEY), AsyncStorage.getItem(STATEMENT_KEY),
         ]);
@@ -222,8 +229,29 @@ export default function RecordScreen({ onShowLog }: Props) {
         if (t === 'waketime' && !isWakePlayingRef.current) { const uri = await AsyncStorage.getItem(REC_URI_KEY); if (uri) startLoop(uri, t); }
       } catch {}
     });
-    return () => { mounted.current = false; clearInterval(timer); clearFadeTimers(); onReceive.remove(); onResponse.remove(); };
+    const appStateSub = AppState.addEventListener('change', (state) => {
+      console.log('[Somni] AppState ->', state, '| loopType:', loopTypeRef.current, '| isPlaying:', isWakePlayingRef.current);
+    });
+    return () => { mounted.current = false; clearInterval(timer); clearFadeTimers(); onReceive.remove(); onResponse.remove(); appStateSub.remove(); };
   }, [startLoop, player]);
+
+  // JS-controlled loop with 10 s gap for bedtime (waketime uses native gapless loop)
+  useEffect(() => {
+    if (!playerStatus.didJustFinish) return;
+    if (loopTypeRef.current !== 'bedtime') return;
+    const gen = genRef.current;
+    console.log('[Somni] didJustFinish — scheduling 10 s gap before restart (gen', gen, ')');
+    const t = setTimeout(async () => {
+      if (gen !== genRef.current) { console.log('[Somni] gap timer cancelled (gen changed)'); return; }
+      try {
+        console.log('[Somni] restarting loop after gap');
+        await player.seekTo(0);
+        if (gen !== genRef.current) return;
+        player.play();
+      } catch (e) { console.log('[Somni] gap restart error:', e); }
+    }, GAP_BETWEEN_LOOPS_MS);
+    return () => clearTimeout(t);
+  }, [playerStatus.didJustFinish, player]);
 
   async function toggleRecording() {
     if (isRecording) {
@@ -253,7 +281,9 @@ export default function RecordScreen({ onShowLog }: Props) {
         Alert.alert('Save failed', msg);
         setStatus(`Save error: ${msg}`);
       } finally {
-        setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true, shouldPlayInBackground: true, interruptionMode: 'doNotMix' }).catch(() => {});
+        const afterRecMode = { allowsRecording: false, playsInSilentMode: true, shouldPlayInBackground: true, interruptionMode: 'doNotMix' as const };
+        console.log('[Somni] setAudioModeAsync (toggleRecording finally):', JSON.stringify(afterRecMode));
+        setAudioModeAsync(afterRecMode).catch(() => {});
       }
     } else {
       try {
@@ -265,7 +295,9 @@ export default function RecordScreen({ onShowLog }: Props) {
           return;
         }
         setStatus('Configuring audio session...');
-        await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+        const recMode = { allowsRecording: true, playsInSilentMode: true };
+        console.log('[Somni] setAudioModeAsync (start recording):', JSON.stringify(recMode));
+        await setAudioModeAsync(recMode);
         setStatus('Preparing recorder...');
         await recorder.prepareToRecordAsync();
         setStatus('Starting...');
