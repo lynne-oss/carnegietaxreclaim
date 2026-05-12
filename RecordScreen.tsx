@@ -77,7 +77,7 @@ export default function RecordScreen({ onShowLog }: Props) {
 
   const recorder      = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const recorderState = useAudioRecorderState(recorder);
-  const player        = useAudioPlayer(null);
+  const player        = useAudioPlayer(null, { keepAudioSessionActive: true, updateInterval: 5000 });
   const playerStatus  = useAudioPlayerStatus(player);
 
   const genRef           = useRef(0);
@@ -85,7 +85,6 @@ export default function RecordScreen({ onShowLog }: Props) {
   const fadeTimer        = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastPlayedRef    = useRef('');
   const isFading         = useRef(false);
-  const isKeepAlive      = useRef(false);
   const isWakePlayingRef = useRef(false);
 
   function clearFadeTimers() {
@@ -93,21 +92,9 @@ export default function RecordScreen({ onShowLog }: Props) {
     if (fadeTimer.current)  { clearInterval(fadeTimer.current);  fadeTimer.current  = null; }
   }
 
-  // Loop restart: when track finishes, wait 10 s then replay
-  useEffect(() => {
-    if (!playerStatus.didJustFinish || isFading.current || isKeepAlive.current) return;
-    const gen = genRef.current;
-    setTimeout(() => {
-      if (gen !== genRef.current || isFading.current) return;
-      player.seekTo(0);
-      player.play();
-    }, 10_000);
-  }, [playerStatus.didJustFinish, player]);
-
   const startLoop = useCallback(async (uri: string, type: 'bedtime' | 'waketime') => {
     const gen = ++genRef.current;
     isFading.current = false;
-    isKeepAlive.current = false;
     clearFadeTimers();
     try {
       player.loop = false;
@@ -125,6 +112,7 @@ export default function RecordScreen({ onShowLog }: Props) {
       if (gen !== genRef.current) return;
       player.volume = type === 'waketime' ? 0 : 1;
       player.replace({ uri });
+      player.loop = true;
       player.play();
       setIsPlaying(true);
       if (type === 'waketime') { setIsWakePlaying(true); isWakePlayingRef.current = true; }
@@ -153,10 +141,9 @@ export default function RecordScreen({ onShowLog }: Props) {
             player.volume = Math.max(1 - step / steps, 0);
             if (step >= steps) {
               clearInterval(fadeTimer.current!); fadeTimer.current = null;
-              // Keep audio session alive silently so the JS timer can fire the pre-wake fade-in
-              player.loop = true;
-              player.volume = 0;
-              isKeepAlive.current = true;
+              // Drop to barely-audible volume to keep the iOS audio session alive all night
+              // (player.loop=true was set at playback start; native Swift observer handles restart)
+              player.volume = 0.05;
               isFading.current = false;
               setIsPlaying(false); setStatus('Faded out. Sleep well.');
             }
@@ -171,7 +158,6 @@ export default function RecordScreen({ onShowLog }: Props) {
   async function stopPlayback() {
     genRef.current++;
     isFading.current = false;
-    isKeepAlive.current = false;
     clearFadeTimers();
     player.loop = false;
     player.pause();
