@@ -24,24 +24,28 @@ import { LogEntry, LOG_KEY } from './types';
 const SLEEP_PLAY_MS   = 30 * 60 * 1000;
 const SLEEP_FADE_MS   = 60 * 1000;
 const SLEEP_FADE_STEP = 500;
-const WAKE_FADE_MS    = 30 * 1000;
+const WAKE_FADE_MS    = 10 * 60 * 1000;
 const WAKE_FADE_STEP  = 100;
 
 const REC_URI_KEY  = '@somni_rec';
 const BEDTIME_KEY  = '@somni_bed';
-const WAKETIME_KEY = '@somni_wake';
+const WAKETIME_KEY  = '@somni_wake';
+const STATEMENT_KEY = '@somni_statement';
 
 const NETLIFY_URL = 'https://thesomni.app/.netlify/functions/generate-intention';
 
 type SignalPhase = 'input' | 'loading' | 'result' | 'direct';
 
 Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowBanner: false,
-    shouldShowList:   false,
-    shouldPlaySound:  false,
-    shouldSetBadge:   false,
-  }),
+  handleNotification: async (notification) => {
+    const isWake = notification.request.content.data?.type === 'waketime';
+    return {
+      shouldShowBanner: isWake,
+      shouldShowList:   isWake,
+      shouldPlaySound:  isWake,
+      shouldSetBadge:   false,
+    };
+  },
 });
 
 interface Props {
@@ -62,6 +66,7 @@ export default function RecordScreen({ onShowLog }: Props) {
   const [ans2,          setAns2]          = useState('');
   const [ans3,          setAns3]          = useState('');
   const [statement,     setStatement]     = useState('');
+  const [wakeStatement, setWakeStatement] = useState('');
 
   const recorder      = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const recorderState = useAudioRecorderState(recorder);
@@ -103,7 +108,8 @@ export default function RecordScreen({ onShowLog }: Props) {
       await setAudioModeAsync({
         allowsRecording: false,
         playsInSilentMode: true,
-        staysActiveInBackground: true,
+        shouldPlayInBackground: true,
+        interruptionMode: 'doNotMix',
       });
       if (gen !== genRef.current) return;
       player.volume = type === 'waketime' ? 0 : 1;
@@ -167,14 +173,15 @@ export default function RecordScreen({ onShowLog }: Props) {
         const { granted } = await Notifications.requestPermissionsAsync();
         if (!mounted.current) return;
         if (!granted) Alert.alert('Notifications disabled', 'Enable notifications for The Somni in iOS Settings.');
-        await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true, staysActiveInBackground: true });
-        const [savedUri, savedBed, savedWake] = await Promise.all([
-          AsyncStorage.getItem(REC_URI_KEY), AsyncStorage.getItem(BEDTIME_KEY), AsyncStorage.getItem(WAKETIME_KEY),
+        await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true, shouldPlayInBackground: true, interruptionMode: 'doNotMix' });
+        const [savedUri, savedBed, savedWake, savedStatement] = await Promise.all([
+          AsyncStorage.getItem(REC_URI_KEY), AsyncStorage.getItem(BEDTIME_KEY), AsyncStorage.getItem(WAKETIME_KEY), AsyncStorage.getItem(STATEMENT_KEY),
         ]);
         if (!mounted.current) return;
         if (savedUri) { setHasRecording(true); setStatus('Recording loaded. Ready to schedule.'); }
-        if (savedBed)  setBedtime(savedBed);
-        if (savedWake) setWaketime(savedWake);
+        if (savedBed)       setBedtime(savedBed);
+        if (savedWake)      setWaketime(savedWake);
+        if (savedStatement) setWakeStatement(savedStatement);
         const lastResponse = await Notifications.getLastNotificationResponseAsync();
         if (!mounted.current) return;
         const launchType = lastResponse?.notification.request.content.data?.type as 'bedtime' | 'waketime' | undefined;
@@ -225,6 +232,8 @@ export default function RecordScreen({ onShowLog }: Props) {
         if (destFile.exists) destFile.delete();
         new EXFile(uri).copy(destFile);
         await AsyncStorage.setItem(REC_URI_KEY, destFile.uri);
+        await AsyncStorage.setItem(STATEMENT_KEY, statement).catch(() => {});
+        setWakeStatement(statement);
         setHasRecording(true);
         setStatus('Saved. Set your times above, then tap Schedule.');
         const entry: LogEntry = { id: Date.now().toString(), timestamp: Date.now(), text: statement };
@@ -278,11 +287,11 @@ export default function RecordScreen({ onShowLog }: Props) {
       trigger: { type: Notifications.SchedulableTriggerInputTypes.DAILY, hour: bh, minute: bm },
     });
     await Notifications.scheduleNotificationAsync({
-      content: { title: 'Somni — Wake', body: 'Tap to start your wake audio.', data: { type: 'waketime' } },
+      content: { title: 'Somni — Wake', body: 'Tap to start your wake audio.', sound: 'default', data: { type: 'waketime' } },
       trigger: { type: Notifications.SchedulableTriggerInputTypes.DAILY, hour: wh, minute: wm },
     });
     setStatus(`Sleep ${bedtime} · Wake ${waketime}`);
-    Alert.alert('Scheduled', `Sleep ${bedtime}: plays 30 min then fades out.\nWake ${waketime}: fades in over 30 s.`);
+    Alert.alert('Scheduled', `Sleep ${bedtime}: plays 30 min then fades out.\nWake ${waketime}: fades in over 10 min.`);
   }
 
   async function callNetlify(a1: string, a2: string, a3: string) {
@@ -332,7 +341,9 @@ export default function RecordScreen({ onShowLog }: Props) {
         <View style={s.wakeInner}>
           <Text style={s.wakeTitle}>The Somni</Text>
           <View style={s.wakeRule} />
-          <Text style={s.wakeStatus}>{status}</Text>
+          {!!wakeStatement && (
+            <Text style={s.wakeStatement}>{wakeStatement}</Text>
+          )}
           <View style={{ marginTop: 48 }}>
             <Btn label="Stop" onPress={stopPlayback} dark />
           </View>
@@ -638,13 +649,14 @@ const s = StyleSheet.create({
     backgroundColor: '#D8D2C8',
     marginBottom: 40,
   },
-  wakeStatus: {
-    fontFamily: 'Inter_300Light',
+  wakeStatement: {
+    fontFamily: 'CormorantGaramond_300Light',
     fontWeight: '300',
-    fontSize: 13,
-    color: '#7A7068',
-    letterSpacing: 2,
-    textTransform: 'uppercase',
+    fontSize: 26,
+    color: '#0B0B0D',
+    lineHeight: 38,
+    letterSpacing: 0.5,
     textAlign: 'center',
+    paddingHorizontal: 8,
   },
 });
