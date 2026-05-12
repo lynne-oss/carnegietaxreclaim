@@ -26,6 +26,7 @@ const SLEEP_FADE_MS   = 60 * 1000;
 const SLEEP_FADE_STEP = 500;
 const WAKE_FADE_MS    = 10 * 60 * 1000;
 const WAKE_FADE_STEP  = 100;
+const PREWAKE_LEAD_MIN = 10;
 
 const REC_URI_KEY  = '@somni_rec';
 const BEDTIME_KEY  = '@somni_bed';
@@ -33,6 +34,12 @@ const WAKETIME_KEY  = '@somni_wake';
 const STATEMENT_KEY = '@somni_statement';
 
 const NETLIFY_URL = 'https://thesomni.app/.netlify/functions/generate-intention';
+
+function subtractMinutes(hhmm: string, mins: number): string {
+  const [h, m] = hhmm.split(':').map(Number);
+  const total = ((h * 60 + m - mins) + 1440) % 1440;
+  return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+}
 
 type SignalPhase = 'input' | 'loading' | 'result' | 'direct';
 
@@ -73,11 +80,13 @@ export default function RecordScreen({ onShowLog }: Props) {
   const player        = useAudioPlayer(null);
   const playerStatus  = useAudioPlayerStatus(player);
 
-  const genRef        = useRef(0);
-  const sleepTimer    = useRef<ReturnType<typeof setTimeout>  | null>(null);
-  const fadeTimer     = useRef<ReturnType<typeof setInterval> | null>(null);
-  const lastPlayedRef = useRef('');
-  const isFading      = useRef(false);
+  const genRef           = useRef(0);
+  const sleepTimer       = useRef<ReturnType<typeof setTimeout>  | null>(null);
+  const fadeTimer        = useRef<ReturnType<typeof setInterval> | null>(null);
+  const lastPlayedRef    = useRef('');
+  const isFading         = useRef(false);
+  const isKeepAlive      = useRef(false);
+  const isWakePlayingRef = useRef(false);
 
   function clearFadeTimers() {
     if (sleepTimer.current) { clearTimeout(sleepTimer.current);  sleepTimer.current = null; }
@@ -86,7 +95,7 @@ export default function RecordScreen({ onShowLog }: Props) {
 
   // Loop restart: when track finishes, wait 10 s then replay
   useEffect(() => {
-    if (!playerStatus.didJustFinish || isFading.current) return;
+    if (!playerStatus.didJustFinish || isFading.current || isKeepAlive.current) return;
     const gen = genRef.current;
     setTimeout(() => {
       if (gen !== genRef.current || isFading.current) return;
@@ -98,8 +107,10 @@ export default function RecordScreen({ onShowLog }: Props) {
   const startLoop = useCallback(async (uri: string, type: 'bedtime' | 'waketime') => {
     const gen = ++genRef.current;
     isFading.current = false;
+    isKeepAlive.current = false;
     clearFadeTimers();
     try {
+      player.loop = false;
       player.pause();
       if (!new EXFile(uri).exists) {
         setStatus('Recording not found — please re-record your intention.');
@@ -116,7 +127,7 @@ export default function RecordScreen({ onShowLog }: Props) {
       player.replace({ uri });
       player.play();
       setIsPlaying(true);
-      if (type === 'waketime') setIsWakePlaying(true);
+      if (type === 'waketime') { setIsWakePlaying(true); isWakePlayingRef.current = true; }
 
       if (type === 'waketime') {
         const steps = WAKE_FADE_MS / WAKE_FADE_STEP;
@@ -142,7 +153,10 @@ export default function RecordScreen({ onShowLog }: Props) {
             player.volume = Math.max(1 - step / steps, 0);
             if (step >= steps) {
               clearInterval(fadeTimer.current!); fadeTimer.current = null;
-              player.pause();
+              // Keep audio session alive silently so the JS timer can fire the pre-wake fade-in
+              player.loop = true;
+              player.volume = 0;
+              isKeepAlive.current = true;
               isFading.current = false;
               setIsPlaying(false); setStatus('Faded out. Sleep well.');
             }
@@ -157,10 +171,13 @@ export default function RecordScreen({ onShowLog }: Props) {
   async function stopPlayback() {
     genRef.current++;
     isFading.current = false;
+    isKeepAlive.current = false;
     clearFadeTimers();
+    player.loop = false;
     player.pause();
     setIsPlaying(false);
     setIsWakePlaying(false);
+    isWakePlayingRef.current = false;
     setStatus('Stopped.');
   }
 
@@ -196,8 +213,11 @@ export default function RecordScreen({ onShowLog }: Props) {
               AsyncStorage.getItem(REC_URI_KEY), AsyncStorage.getItem(BEDTIME_KEY), AsyncStorage.getItem(WAKETIME_KEY),
             ]);
             if (!mounted.current) return;
-            if (uri && hhmm === bed)  { lastPlayedRef.current = hhmm; startLoop(uri, 'bedtime');  }
-            if (uri && hhmm === wake) { lastPlayedRef.current = hhmm; startLoop(uri, 'waketime'); }
+            if (uri && hhmm === bed) { lastPlayedRef.current = hhmm; startLoop(uri, 'bedtime'); }
+            if (uri && wake && hhmm === subtractMinutes(wake, PREWAKE_LEAD_MIN) && !isWakePlayingRef.current) {
+              lastPlayedRef.current = hhmm; startLoop(uri, 'waketime');
+            }
+            if (uri && hhmm === wake && !isWakePlayingRef.current) { lastPlayedRef.current = hhmm; startLoop(uri, 'waketime'); }
           } catch {}
         }, 30_000);
       } catch {}
@@ -205,13 +225,15 @@ export default function RecordScreen({ onShowLog }: Props) {
     const onReceive = Notifications.addNotificationReceivedListener(async (notif) => {
       try {
         const t = notif.request.content.data?.type as 'bedtime' | 'waketime' | undefined;
-        if (t === 'bedtime' || t === 'waketime') { const uri = await AsyncStorage.getItem(REC_URI_KEY); if (uri) startLoop(uri, t); }
+        if (t === 'bedtime') { const uri = await AsyncStorage.getItem(REC_URI_KEY); if (uri) startLoop(uri, t); }
+        if (t === 'waketime' && !isWakePlayingRef.current) { const uri = await AsyncStorage.getItem(REC_URI_KEY); if (uri) startLoop(uri, t); }
       } catch {}
     });
     const onResponse = Notifications.addNotificationResponseReceivedListener(async (resp) => {
       try {
         const t = resp.notification.request.content.data?.type as 'bedtime' | 'waketime' | undefined;
-        if (t === 'bedtime' || t === 'waketime') { const uri = await AsyncStorage.getItem(REC_URI_KEY); if (uri) startLoop(uri, t); }
+        if (t === 'bedtime') { const uri = await AsyncStorage.getItem(REC_URI_KEY); if (uri) startLoop(uri, t); }
+        if (t === 'waketime' && !isWakePlayingRef.current) { const uri = await AsyncStorage.getItem(REC_URI_KEY); if (uri) startLoop(uri, t); }
       } catch {}
     });
     return () => { mounted.current = false; clearInterval(timer); clearFadeTimers(); onReceive.remove(); onResponse.remove(); };
@@ -291,7 +313,7 @@ export default function RecordScreen({ onShowLog }: Props) {
       trigger: { type: Notifications.SchedulableTriggerInputTypes.DAILY, hour: wh, minute: wm },
     });
     setStatus(`Sleep ${bedtime} · Wake ${waketime}`);
-    Alert.alert('Scheduled', `Sleep ${bedtime}: plays 30 min then fades out.\nWake ${waketime}: fades in over 10 min.`);
+    Alert.alert('Scheduled', `Sleep ${bedtime}: plays 30 min then loops silently.\nMorning: intention fades in from ${subtractMinutes(waketime, PREWAKE_LEAD_MIN)}, alarm at ${waketime}.`);
   }
 
   async function callNetlify(a1: string, a2: string, a3: string) {
