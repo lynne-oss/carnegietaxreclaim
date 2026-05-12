@@ -80,6 +80,8 @@ export default function RecordScreen({ onShowLog }: Props) {
   const recorderState = useAudioRecorderState(recorder);
   const player        = useAudioPlayer(null, { keepAudioSessionActive: true, updateInterval: 5000 });
   const playerStatus  = useAudioPlayerStatus(player);
+  // Delta binaural track — loaded at startup, played continuously during sleep/wake sessions
+  const deltaPlayer   = useAudioPlayer(require('./assets/audio/delta.mp3'), { keepAudioSessionActive: true, updateInterval: 30000 });
 
   const genRef           = useRef(0);
   const sleepTimer       = useRef<ReturnType<typeof setTimeout>  | null>(null);
@@ -88,6 +90,7 @@ export default function RecordScreen({ onShowLog }: Props) {
   const isFading         = useRef(false);
   const isWakePlayingRef = useRef(false);
   const loopTypeRef      = useRef<'bedtime' | 'waketime' | null>(null);
+  const deltaActiveRef   = useRef(false);
 
   function clearFadeTimers() {
     if (sleepTimer.current) { clearTimeout(sleepTimer.current);  sleepTimer.current = null; }
@@ -119,6 +122,15 @@ export default function RecordScreen({ onShowLog }: Props) {
       console.log('[Somni] player.play() called — type:', type, 'loop:', player.loop, 'volume:', player.volume);
       setIsPlaying(true);
       if (type === 'waketime') { setIsWakePlaying(true); isWakePlayingRef.current = true; }
+
+      // Start delta binaural track if not already running
+      if (!deltaActiveRef.current) {
+        deltaPlayer.volume = 0.3;
+        deltaPlayer.loop = true;
+        deltaPlayer.play();
+        deltaActiveRef.current = true;
+        console.log('[Somni] delta player started');
+      }
 
       if (type === 'waketime') {
         const steps = WAKE_FADE_MS / WAKE_FADE_STEP;
@@ -156,7 +168,7 @@ export default function RecordScreen({ onShowLog }: Props) {
     } catch {
       setStatus('Playback error — re-record and try again.');
     }
-  }, [player]);
+  }, [player, deltaPlayer]);
 
   async function stopPlayback() {
     console.log('[Somni] stopPlayback called');
@@ -166,6 +178,9 @@ export default function RecordScreen({ onShowLog }: Props) {
     loopTypeRef.current = null;
     player.loop = false;
     player.pause();
+    deltaPlayer.loop = false;
+    deltaPlayer.pause();
+    deltaActiveRef.current = false;
     setIsPlaying(false);
     setIsWakePlaying(false);
     isWakePlayingRef.current = false;
