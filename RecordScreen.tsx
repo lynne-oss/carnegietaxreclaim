@@ -21,8 +21,8 @@ import Btn from './Btn';
 import { C } from './theme';
 import { LogEntry, LOG_KEY } from './types';
 
-const SLEEP_PLAY_MS   = 30 * 60 * 1000;
-const SLEEP_FADE_MS   = 60 * 1000;
+const SLEEP_PLAY_MS   = 20 * 60 * 1000;
+const SLEEP_FADE_MS   = 10 * 60 * 1000;
 const SLEEP_FADE_STEP = 500;
 const WAKE_FADE_MS    = 10 * 60 * 1000;
 const WAKE_FADE_STEP  = 100;
@@ -143,7 +143,7 @@ export default function RecordScreen({ onShowLog }: Props) {
           if (step >= steps) { clearInterval(fadeTimer.current!); fadeTimer.current = null; setStatus('Playing on loop...'); }
         }, WAKE_FADE_STEP);
       } else {
-        setStatus('Playing — fades out after 30 min.');
+        setStatus('Playing — fades out from 20 min, silent at 30 min.');
         sleepTimer.current = setTimeout(() => {
           if (gen !== genRef.current) return;
           setStatus('Fading out...');
@@ -156,11 +156,12 @@ export default function RecordScreen({ onShowLog }: Props) {
             player.volume = Math.max(1 - step / steps, 0);
             if (step >= steps) {
               clearInterval(fadeTimer.current!); fadeTimer.current = null;
-              // Barely-audible volume keeps the iOS audio session alive all night;
-              // JS gap-loop useEffect handles restarts with 10 s gaps.
-              player.volume = 0.05;
+              // Intention stops completely; delta keeps the session alive all night.
+              loopTypeRef.current = null;
+              player.loop = false;
+              player.pause();
               isFading.current = false;
-              setIsPlaying(false); setStatus('Faded out. Sleep well.');
+              setIsPlaying(false); setStatus('Sleeping. Delta playing all night.');
             }
           }, SLEEP_FADE_STEP);
         }, SLEEP_PLAY_MS);
@@ -345,7 +346,7 @@ export default function RecordScreen({ onShowLog }: Props) {
       trigger: { type: Notifications.SchedulableTriggerInputTypes.DAILY, hour: wh, minute: wm },
     });
     setStatus(`Sleep ${bedtime} · Wake ${waketime}`);
-    Alert.alert('Scheduled', `Sleep ${bedtime}: plays 30 min then loops silently.\nMorning: intention fades in from ${subtractMinutes(waketime, PREWAKE_LEAD_MIN)}, alarm at ${waketime}.`);
+    Alert.alert('Scheduled', `Sleep ${bedtime}: intention plays 20 min, fades out by 30 min, delta continues all night.\nMorning: intention fades in from ${subtractMinutes(waketime, PREWAKE_LEAD_MIN)}, alarm at ${waketime}.`);
   }
 
   async function callNetlify(a1: string, a2: string, a3: string) {
