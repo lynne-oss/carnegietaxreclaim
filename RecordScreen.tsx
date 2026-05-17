@@ -109,10 +109,21 @@ export default function RecordScreen({ onShowLog }: Props) {
         setStatus('Recording not found — please re-record your intention.');
         return;
       }
-      const modeArgs = { allowsRecording: false, playsInSilentMode: true, shouldPlayInBackground: true, interruptionMode: 'doNotMix' as const };
-      console.log('[Somni] setAudioModeAsync (startLoop/' + type + '):', JSON.stringify(modeArgs));
-      await setAudioModeAsync(modeArgs);
-      if (gen !== genRef.current) return;
+      // Configure audio mode and start delta only once per sleep session.
+      // Calling setCategory() on an active AVAudioSession (e.g. at pre-wake
+      // when delta is already playing) can briefly disrupt the session and
+      // drop the background audio lock intermittently.
+      if (!deltaActiveRef.current) {
+        const modeArgs = { allowsRecording: false, playsInSilentMode: true, shouldPlayInBackground: true, interruptionMode: 'doNotMix' as const };
+        console.log('[Somni] setAudioModeAsync (session start):', JSON.stringify(modeArgs));
+        await setAudioModeAsync(modeArgs);
+        if (gen !== genRef.current) return;
+        deltaPlayer.volume = 0.3;
+        deltaPlayer.loop = true;
+        deltaPlayer.play();
+        deltaActiveRef.current = true;
+        console.log('[Somni] delta player started');
+      }
       player.volume = type === 'waketime' ? 0 : 1;
       player.replace({ uri });
       // waketime: native gapless loop during fade-in; bedtime: JS loop with 10 s gap
@@ -122,15 +133,6 @@ export default function RecordScreen({ onShowLog }: Props) {
       console.log('[Somni] player.play() called — type:', type, 'loop:', player.loop, 'volume:', player.volume);
       setIsPlaying(true);
       if (type === 'waketime') { setIsWakePlaying(true); isWakePlayingRef.current = true; }
-
-      // Start delta binaural track if not already running
-      if (!deltaActiveRef.current) {
-        deltaPlayer.volume = 0.3;
-        deltaPlayer.loop = true;
-        deltaPlayer.play();
-        deltaActiveRef.current = true;
-        console.log('[Somni] delta player started');
-      }
 
       if (type === 'waketime') {
         const steps = WAKE_FADE_MS / WAKE_FADE_STEP;
