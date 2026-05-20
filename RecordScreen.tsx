@@ -62,6 +62,7 @@ export default function RecordScreen({ onShowLog }: Props) {
 
   const [signalPhase,   setSignalPhase]   = useState<SignalPhase>('input');
   const [ans1,          setAns1]          = useState('');
+  const [ans2,          setAns2]          = useState('');
   const [statement,     setStatement]     = useState('');
   const [wakeStatement, setWakeStatement] = useState('');
 
@@ -359,18 +360,18 @@ export default function RecordScreen({ onShowLog }: Props) {
     Alert.alert('Scheduled', `Sleep ${bedtime}: intention plays 20 min, fades out by 30 min, delta continues all night.\nMorning ${waketime}: tap the notification to play your intention once.`);
   }
 
-  async function callNetlify(text: string) {
+  async function callNetlify(a1: string, a2: string) {
     setSignalPhase('loading');
     try {
       const res = await fetch(NETLIFY_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ ans1: a1, ans2: a2 }),
       });
       if (!res.ok) throw new Error(`Server error ${res.status}: ${await res.text()}`);
       const data = await res.json();
-      const text = (data.intention as string).trim();
-      setStatement(text);
+      const intention = (data.intention as string).trim();
+      setStatement(intention);
       setSignalPhase('result');
     } catch (e: any) {
       Alert.alert('Error', e.message ?? 'Something went wrong. Check your connection and try again.');
@@ -379,19 +380,21 @@ export default function RecordScreen({ onShowLog }: Props) {
   }
 
   function handleGenerate() {
-    const t = ans1.trim();
-    if (!t) { Alert.alert('', 'Please write something before generating.'); return; }
-    callNetlify(t);
+    const a1 = ans1.trim();
+    const a2 = ans2.trim();
+    if (!a1 || !a2) { Alert.alert('', 'Please fill in both fields before generating.'); return; }
+    callNetlify(a1, a2);
   }
 
   function handleSimplify() {
-    callNetlify(ans1.trim());
+    callNetlify(ans1.trim(), ans2.trim());
   }
 
   function handleTryAgain() {
     setSignalPhase('input');
     setStatement('');
     setAns1('');
+    setAns2('');
   }
 
   const recordLabel = isRecording
@@ -450,10 +453,19 @@ export default function RecordScreen({ onShowLog }: Props) {
 
           {signalPhase === 'input' && (
             <>
-              <Text style={s.label}>What are you working on</Text>
+              <Text style={s.label}>What are you committed to right now</Text>
               <TextInput
                 value={ans1}
                 onChangeText={setAns1}
+                multiline
+                style={s.signalInput}
+                placeholderTextColor={C.secondary}
+                placeholder="..."
+              />
+              <Text style={[s.label, { marginTop: 24 }]}>What usually pulls you off it</Text>
+              <TextInput
+                value={ans2}
+                onChangeText={setAns2}
                 multiline
                 style={s.signalInput}
                 placeholderTextColor={C.secondary}
