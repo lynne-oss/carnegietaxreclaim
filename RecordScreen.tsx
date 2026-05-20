@@ -24,9 +24,6 @@ import { LogEntry, LOG_KEY } from './types';
 const SLEEP_PLAY_MS   = 20 * 60 * 1000;
 const SLEEP_FADE_MS   = 10 * 60 * 1000;
 const SLEEP_FADE_STEP = 500;
-const WAKE_FADE_MS    = 10 * 60 * 1000;
-const WAKE_FADE_STEP  = 100;
-const PREWAKE_LEAD_MIN = 10;
 const GAP_BETWEEN_LOOPS_MS = 10_000;
 
 const REC_URI_KEY  = '@somni_rec';
@@ -35,12 +32,6 @@ const WAKETIME_KEY  = '@somni_wake';
 const STATEMENT_KEY = '@somni_statement';
 
 const NETLIFY_URL = 'https://thesomni.app/.netlify/functions/generate-intention';
-
-function subtractMinutes(hhmm: string, mins: number): string {
-  const [h, m] = hhmm.split(':').map(Number);
-  const total = ((h * 60 + m - mins) + 1440) % 1440;
-  return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
-}
 
 type SignalPhase = 'input' | 'loading' | 'result' | 'direct';
 
@@ -71,8 +62,6 @@ export default function RecordScreen({ onShowLog }: Props) {
 
   const [signalPhase,   setSignalPhase]   = useState<SignalPhase>('input');
   const [ans1,          setAns1]          = useState('');
-  const [ans2,          setAns2]          = useState('');
-  const [ans3,          setAns3]          = useState('');
   const [statement,     setStatement]     = useState('');
   const [wakeStatement, setWakeStatement] = useState('');
 
@@ -141,26 +130,17 @@ export default function RecordScreen({ onShowLog }: Props) {
         deltaActiveRef.current = true;
         console.log('[Somni] delta player started');
       }
-      player.volume = type === 'waketime' ? 0 : 1;
+      player.volume = 1;
       player.replace({ uri });
-      // waketime: native gapless loop during fade-in; bedtime: JS loop with 10 s gap
-      player.loop = type === 'waketime';
+      player.loop = false; // bedtime: JS gap restart; waketime: plays once then stops
       loopTypeRef.current = type;
       player.play();
-      console.log('[Somni] player.play() called — type:', type, 'loop:', player.loop, 'volume:', player.volume);
+      console.log('[Somni] player.play() called — type:', type, 'loop:', player.loop);
       setIsPlaying(true);
-      if (type === 'waketime') { setIsWakePlaying(true); isWakePlayingRef.current = true; }
-
       if (type === 'waketime') {
-        const steps = WAKE_FADE_MS / WAKE_FADE_STEP;
-        let step = 0;
-        setStatus('Waking gently...');
-        fadeTimer.current = setInterval(() => {
-          if (gen !== genRef.current) { clearInterval(fadeTimer.current!); return; }
-          step++;
-          player.volume = Math.min(step / steps, 1);
-          if (step >= steps) { clearInterval(fadeTimer.current!); fadeTimer.current = null; setStatus('Playing on loop...'); }
-        }, WAKE_FADE_STEP);
+        setIsWakePlaying(true);
+        isWakePlayingRef.current = true;
+        setStatus('Good morning.');
       } else {
         setStatus('Playing — fades out from 20 min, silent at 30 min.');
         sleepTimer.current = setTimeout(() => {
@@ -242,9 +222,6 @@ export default function RecordScreen({ onShowLog }: Props) {
             ]);
             if (!mounted.current) return;
             if (uri && hhmm === bed) { lastPlayedRef.current = hhmm; startLoop(uri, 'bedtime'); }
-            if (uri && wake && hhmm === subtractMinutes(wake, PREWAKE_LEAD_MIN) && !isWakePlayingRef.current) {
-              lastPlayedRef.current = hhmm; startLoop(uri, 'waketime');
-            }
             if (uri && hhmm === wake && !isWakePlayingRef.current) { lastPlayedRef.current = hhmm; startLoop(uri, 'waketime'); }
           } catch {}
         }, 60_000);
@@ -270,23 +247,37 @@ export default function RecordScreen({ onShowLog }: Props) {
     return () => { mounted.current = false; clearInterval(timer); clearFadeTimers(); onReceive.remove(); onResponse.remove(); appStateSub.remove(); };
   }, [startLoop]);
 
-  // JS-controlled loop with 10 s gap for bedtime (waketime uses native gapless loop)
+  // Handle intention track finishing
   useEffect(() => {
     if (!playerStatus.didJustFinish) return;
-    if (loopTypeRef.current !== 'bedtime') return;
-    const gen = genRef.current;
-    console.log('[Somni] didJustFinish — scheduling 10 s gap before restart (gen', gen, ')');
-    const t = setTimeout(async () => {
-      if (gen !== genRef.current) { console.log('[Somni] gap timer cancelled (gen changed)'); return; }
-      try {
-        console.log('[Somni] restarting loop after gap');
-        await player.seekTo(0);
-        if (gen !== genRef.current) return;
-        player.play();
-      } catch (e) { console.log('[Somni] gap restart error:', e); }
-    }, GAP_BETWEEN_LOOPS_MS);
-    return () => clearTimeout(t);
-  }, [playerStatus.didJustFinish, player]);
+    if (loopTypeRef.current === 'bedtime') {
+      // 10 s gap then restart
+      const gen = genRef.current;
+      console.log('[Somni] didJustFinish (bedtime) — scheduling 10 s gap (gen', gen, ')');
+      const t = setTimeout(async () => {
+        if (gen !== genRef.current) { console.log('[Somni] gap timer cancelled'); return; }
+        try {
+          await player.seekTo(0);
+          if (gen !== genRef.current) return;
+          player.play();
+        } catch (e) { console.log('[Somni] gap restart error:', e); }
+      }, GAP_BETWEEN_LOOPS_MS);
+      return () => clearTimeout(t);
+    }
+    if (loopTypeRef.current === 'waketime') {
+      // Intention played once — stop everything and return to main screen
+      console.log('[Somni] didJustFinish (waketime) — stopping session');
+      genRef.current++;
+      loopTypeRef.current = null;
+      deltaPlayer.loop = false;
+      deltaPlayer.pause();
+      deltaActiveRef.current = false;
+      setIsPlaying(false);
+      setIsWakePlaying(false);
+      isWakePlayingRef.current = false;
+      setStatus('Good morning.');
+    }
+  }, [playerStatus.didJustFinish, player, deltaPlayer]);
 
   async function toggleRecording() {
     if (isRecording) {
@@ -365,16 +356,16 @@ export default function RecordScreen({ onShowLog }: Props) {
       trigger: { type: Notifications.SchedulableTriggerInputTypes.DAILY, hour: wh, minute: wm },
     });
     setStatus(`Sleep ${bedtime} · Wake ${waketime}`);
-    Alert.alert('Scheduled', `Sleep ${bedtime}: intention plays 20 min, fades out by 30 min, delta continues all night.\nMorning: intention fades in from ${subtractMinutes(waketime, PREWAKE_LEAD_MIN)}, alarm at ${waketime}.`);
+    Alert.alert('Scheduled', `Sleep ${bedtime}: intention plays 20 min, fades out by 30 min, delta continues all night.\nMorning ${waketime}: tap the notification to play your intention once.`);
   }
 
-  async function callNetlify(a1: string, a2: string, a3: string) {
+  async function callNetlify(text: string) {
     setSignalPhase('loading');
     try {
       const res = await fetch(NETLIFY_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ answer1: a1, answer2: a2, answer3: a3 }),
+        body: JSON.stringify({ text }),
       });
       if (!res.ok) throw new Error(`Server error ${res.status}: ${await res.text()}`);
       const data = await res.json();
@@ -388,19 +379,19 @@ export default function RecordScreen({ onShowLog }: Props) {
   }
 
   function handleGenerate() {
-    const a1 = ans1.trim(), a2 = ans2.trim(), a3 = ans3.trim();
-    if (!a1 || !a2 || !a3) { Alert.alert('', 'Please answer all three questions before generating.'); return; }
-    callNetlify(a1, a2, a3);
+    const t = ans1.trim();
+    if (!t) { Alert.alert('', 'Please write something before generating.'); return; }
+    callNetlify(t);
   }
 
   function handleSimplify() {
-    callNetlify(ans1.trim(), ans2.trim(), ans3.trim());
+    callNetlify(ans1.trim());
   }
 
   function handleTryAgain() {
     setSignalPhase('input');
     setStatement('');
-    setAns1(''); setAns2(''); setAns3('');
+    setAns1('');
   }
 
   const recordLabel = isRecording
@@ -459,36 +450,15 @@ export default function RecordScreen({ onShowLog }: Props) {
 
           {signalPhase === 'input' && (
             <>
-              <Text style={s.label}>What matters most right now</Text>
+              <Text style={s.label}>What are you working on</Text>
               <TextInput
                 value={ans1}
                 onChangeText={setAns1}
                 multiline
                 style={s.signalInput}
                 placeholderTextColor={C.secondary}
-                placeholder="…"
+                placeholder="..."
               />
-
-              <Text style={[s.label, { marginTop: 24 }]}>What changes when you stop pulling away from it</Text>
-              <TextInput
-                value={ans2}
-                onChangeText={setAns2}
-                multiline
-                style={s.signalInput}
-                placeholderTextColor={C.secondary}
-                placeholder="…"
-              />
-
-              <Text style={[s.label, { marginTop: 24 }]}>What does this feel like when it becomes natural</Text>
-              <TextInput
-                value={ans3}
-                onChangeText={setAns3}
-                multiline
-                style={s.signalInput}
-                placeholderTextColor={C.secondary}
-                placeholder="…"
-              />
-
               <View style={{ marginTop: 28 }}>
                 <Btn label="Generate" onPress={handleGenerate} />
               </View>

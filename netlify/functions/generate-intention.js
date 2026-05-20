@@ -5,14 +5,14 @@ exports.handler = async function(event) {
     return { statusCode: 405, body: 'Method Not Allowed' };
   }
 
-  const { answer1, answer2, answer3 } = JSON.parse(event.body);
+  const { text } = JSON.parse(event.body);
   const apiKey = process.env.ANTHROPIC_API_KEY;
 
   if (!apiKey) {
     return { statusCode: 500, body: JSON.stringify({ error: 'API key not configured' }) };
   }
 
-  const prompt = `The user answered three questions:\n1. What matters most right now? ${answer1}\n2. What changes when you stop pulling away from it? ${answer2}\n3. What does this feel like when it becomes natural? ${answer3}\n\nFrom these three answers, write a single sentence in first person that this person would say quietly to themselves before sleep. It should feel familiar not aspirational. Calm not motivational. Specific enough to be real. No more than 12 words. Do not start with I am. Do not use affirmation language.`;
+  const prompt = `The user has written: ${text}. Convert this into a single short sentence they can say out loud before sleep. Rules: natural human speech only, maximum 10 words, action-based, must work in messy real life not ideal conditions, absorb any resistance into the language without analysing it. Use one of these patterns: simple action (I am posting), persistence under reality (I keep going when I drift), or commitment continuity (I follow through). Output the sentence only. Nothing else.`;
 
   const body = JSON.stringify({
     model: 'claude-sonnet-4-6',
