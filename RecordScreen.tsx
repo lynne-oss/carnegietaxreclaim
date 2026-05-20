@@ -78,10 +78,12 @@ export default function RecordScreen({ onShowLog }: Props) {
 
   const recorder      = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const recorderState = useAudioRecorderState(recorder);
-  const player        = useAudioPlayer(null, { keepAudioSessionActive: true, updateInterval: 5000 });
+  const player        = useAudioPlayer(null, { keepAudioSessionActive: true, updateInterval: 60_000 });
   const playerStatus  = useAudioPlayerStatus(player);
-  // Delta binaural track — loaded at startup, played continuously during sleep/wake sessions
-  const deltaPlayer   = useAudioPlayer(require('./assets/audio/delta.mp3'), { keepAudioSessionActive: true, updateInterval: 30000 });
+  // Delta binaural track — downloadFirst ensures a local file:// URI is used even on first load,
+  // preventing background HTTP fetches (which iOS blocks with screen locked).
+  const deltaPlayer   = useAudioPlayer(require('./assets/audio/delta.mp3'), { keepAudioSessionActive: true, updateInterval: 30_000, downloadFirst: true });
+  const deltaStatus   = useAudioPlayerStatus(deltaPlayer);
 
   const genRef           = useRef(0);
   const sleepTimer       = useRef<ReturnType<typeof setTimeout>  | null>(null);
@@ -91,6 +93,21 @@ export default function RecordScreen({ onShowLog }: Props) {
   const isWakePlayingRef = useRef(false);
   const loopTypeRef      = useRef<'bedtime' | 'waketime' | null>(null);
   const deltaActiveRef   = useRef(false);
+  const prevDeltaPlayingRef = useRef<boolean | null>(null);
+
+  // Log every delta player state transition so we can trace exactly when/why it stops
+  useEffect(() => {
+    const changed = prevDeltaPlayingRef.current !== deltaStatus.playing;
+    prevDeltaPlayingRef.current = deltaStatus.playing;
+    console.log(
+      '[Somni] deltaStatus' + (changed ? ' *** PLAYING CHANGED ***' : '') +
+      ' — playing:', deltaStatus.playing,
+      '| isLoaded:', deltaStatus.isLoaded,
+      '| didJustFinish:', deltaStatus.didJustFinish,
+      '| t:', Math.round(deltaStatus.currentTime) + 's',
+      '| deltaActive:', deltaActiveRef.current
+    );
+  }, [deltaStatus.playing, deltaStatus.isLoaded, deltaStatus.didJustFinish]);
 
   function clearFadeTimers() {
     if (sleepTimer.current) { clearTimeout(sleepTimer.current);  sleepTimer.current = null; }
@@ -230,7 +247,7 @@ export default function RecordScreen({ onShowLog }: Props) {
             }
             if (uri && hhmm === wake && !isWakePlayingRef.current) { lastPlayedRef.current = hhmm; startLoop(uri, 'waketime'); }
           } catch {}
-        }, 30_000);
+        }, 60_000);
       } catch {}
     })();
     const onReceive = Notifications.addNotificationReceivedListener(async (notif) => {
@@ -248,10 +265,10 @@ export default function RecordScreen({ onShowLog }: Props) {
       } catch {}
     });
     const appStateSub = AppState.addEventListener('change', (state) => {
-      console.log('[Somni] AppState ->', state, '| loopType:', loopTypeRef.current, '| isPlaying:', isWakePlayingRef.current);
+      console.log('[Somni] AppState ->', state, '| loopType:', loopTypeRef.current, '| deltaActive:', deltaActiveRef.current, '| waking:', isWakePlayingRef.current);
     });
     return () => { mounted.current = false; clearInterval(timer); clearFadeTimers(); onReceive.remove(); onResponse.remove(); appStateSub.remove(); };
-  }, [startLoop, player]);
+  }, [startLoop]);
 
   // JS-controlled loop with 10 s gap for bedtime (waketime uses native gapless loop)
   useEffect(() => {
