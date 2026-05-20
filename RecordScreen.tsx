@@ -459,34 +459,34 @@ export default function RecordScreen({ onShowLog }: Props) {
 
           {signalPhase === 'input' && (
             <>
-              <Text style={s.label}>What are you working on or moving towards right now?</Text>
+              <Text style={s.label}>What matters most right now</Text>
               <TextInput
                 value={ans1}
                 onChangeText={setAns1}
                 multiline
                 style={s.signalInput}
                 placeholderTextColor={C.secondary}
-                placeholder="I'm moving towards…"
+                placeholder="…"
               />
 
-              <Text style={[s.label, { marginTop: 24 }]}>What keeps getting in the way?</Text>
+              <Text style={[s.label, { marginTop: 24 }]}>What changes when you stop pulling away from it</Text>
               <TextInput
                 value={ans2}
                 onChangeText={setAns2}
                 multiline
                 style={s.signalInput}
                 placeholderTextColor={C.secondary}
-                placeholder="What gets in the way is…"
+                placeholder="…"
               />
 
-              <Text style={[s.label, { marginTop: 24 }]}>What would it look like if that wasn't an issue?</Text>
+              <Text style={[s.label, { marginTop: 24 }]}>What does this feel like when it becomes natural</Text>
               <TextInput
                 value={ans3}
                 onChangeText={setAns3}
                 multiline
                 style={s.signalInput}
                 placeholderTextColor={C.secondary}
-                placeholder="It would look like…"
+                placeholder="…"
               />
 
               <View style={{ marginTop: 28 }}>
