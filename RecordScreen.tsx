@@ -26,6 +26,8 @@ const SLEEP_FADE_MS   = 10 * 60 * 1000;
 const SLEEP_FADE_STEP = 500;
 const GAP_BETWEEN_LOOPS_MS = 10_000;
 const WAKE_LOOPS = 5;
+const WAKE_FADE_MS = 30_000;
+const WAKE_TARGET_VOL = 0.7;
 
 const REC_URI_KEY  = '@somni_rec';
 const BEDTIME_KEY  = '@somni_bed';
@@ -105,20 +107,32 @@ export default function RecordScreen({ onShowLog }: Props) {
       console.log('[Somni] setAudioModeAsync:', JSON.stringify(modeArgs));
       await setAudioModeAsync(modeArgs);
       if (gen !== genRef.current) return;
-      player.volume = 1;
       player.replace({ uri });
       player.loop = false;
       loopTypeRef.current = type;
       if (type === 'waketime') {
-        // Morning: no delta, play intention 5 times then stop
+        // Morning: fade in from 0 to 0.7 over 30 s, then play remaining loops at 0.7
         wakeLoopCountRef.current = 0;
+        player.volume = 0;
         player.play();
         setIsPlaying(true);
         setIsWakePlaying(true);
         isWakePlayingRef.current = true;
         setStatus('Good morning.');
+        const fadeSteps = WAKE_FADE_MS / SLEEP_FADE_STEP;
+        let fadeStep = 0;
+        fadeTimer.current = setInterval(() => {
+          if (gen !== genRef.current) { clearInterval(fadeTimer.current!); return; }
+          fadeStep++;
+          player.volume = Math.min((WAKE_TARGET_VOL * fadeStep) / fadeSteps, WAKE_TARGET_VOL);
+          if (fadeStep >= fadeSteps) {
+            clearInterval(fadeTimer.current!);
+            fadeTimer.current = null;
+          }
+        }, SLEEP_FADE_STEP);
       } else {
         // Night: delta + intention together, both fade and stop at 30 min
+        player.volume = 1;
         deltaPlayer.volume = 0.3;
         deltaPlayer.loop = true;
         deltaPlayer.play();
