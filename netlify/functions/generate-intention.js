@@ -52,7 +52,7 @@ exports.handler = async function(event) {
     };
   }
 
-  const prompt = `The user answered two questions. What they are committed to right now: ${ans1}. What usually pulls them off it: ${ans2}. Convert both answers into a single short sentence they can say out loud before sleep. Rules: natural human speech only, maximum 10 words, action-based, must work in messy real life not ideal conditions, absorb any resistance into the language without analysing it. Use one of these patterns: simple action (I am posting), persistence under reality (I keep going when I drift), or commitment continuity (I follow through). Output the sentence only. Nothing else.`;
+  const prompt = `The user has written two things:\nWhat they are committed to: ${ans1}\nWhat usually pulls them away from it: ${ans2}\n\nGenerate a single first-person statement that feels psychologically close enough to believe, but strong enough to create tension.\nThe sentence should feel like something the user already knows on some level, but has not fully embodied yet.\n\nRules:\n- First person present tense\n- Maximum 15 words\n- No motivational language\n- No affirmations\n- No coaching tone\n- No vague self-improvement language\n- No hedging words like trying, hoping, wanting, working on\n- Specific to the user's input\n- Natural spoken language\n- Slight emotional friction is acceptable\n- Output the sentence only\n- No quotation marks\n- No explanations`;
 
   const requestBody = JSON.stringify({
     model: 'claude-sonnet-4-6',
