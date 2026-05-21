@@ -25,6 +25,7 @@ const SLEEP_PLAY_MS   = 20 * 60 * 1000;
 const SLEEP_FADE_MS   = 10 * 60 * 1000;
 const SLEEP_FADE_STEP = 500;
 const GAP_BETWEEN_LOOPS_MS = 10_000;
+const WAKE_LOOPS = 5;
 
 const REC_URI_KEY  = '@somni_rec';
 const BEDTIME_KEY  = '@somni_bed';
@@ -73,7 +74,6 @@ export default function RecordScreen({ onShowLog }: Props) {
   // Delta binaural track — downloadFirst ensures a local file:// URI is used even on first load,
   // preventing background HTTP fetches (which iOS blocks with screen locked).
   const deltaPlayer   = useAudioPlayer(require('./assets/audio/delta.mp3'), { keepAudioSessionActive: true, updateInterval: 30_000, downloadFirst: true });
-  const deltaStatus   = useAudioPlayerStatus(deltaPlayer);
 
   const genRef           = useRef(0);
   const sleepTimer       = useRef<ReturnType<typeof setTimeout>  | null>(null);
@@ -82,22 +82,7 @@ export default function RecordScreen({ onShowLog }: Props) {
   const isFading         = useRef(false);
   const isWakePlayingRef = useRef(false);
   const loopTypeRef      = useRef<'bedtime' | 'waketime' | null>(null);
-  const deltaActiveRef   = useRef(false);
-  const prevDeltaPlayingRef = useRef<boolean | null>(null);
-
-  // Log every delta player state transition so we can trace exactly when/why it stops
-  useEffect(() => {
-    const changed = prevDeltaPlayingRef.current !== deltaStatus.playing;
-    prevDeltaPlayingRef.current = deltaStatus.playing;
-    console.log(
-      '[Somni] deltaStatus' + (changed ? ' *** PLAYING CHANGED ***' : '') +
-      ' — playing:', deltaStatus.playing,
-      '| isLoaded:', deltaStatus.isLoaded,
-      '| didJustFinish:', deltaStatus.didJustFinish,
-      '| t:', Math.round(deltaStatus.currentTime) + 's',
-      '| deltaActive:', deltaActiveRef.current
-    );
-  }, [deltaStatus.playing, deltaStatus.isLoaded, deltaStatus.didJustFinish]);
+  const wakeLoopCountRef = useRef(0);
 
   function clearFadeTimers() {
     if (sleepTimer.current) { clearTimeout(sleepTimer.current);  sleepTimer.current = null; }
@@ -116,33 +101,29 @@ export default function RecordScreen({ onShowLog }: Props) {
         setStatus('Recording not found — please re-record your intention.');
         return;
       }
-      // Configure audio mode and start delta only once per sleep session.
-      // Calling setCategory() on an active AVAudioSession (e.g. at pre-wake
-      // when delta is already playing) can briefly disrupt the session and
-      // drop the background audio lock intermittently.
-      if (!deltaActiveRef.current) {
-        const modeArgs = { allowsRecording: false, playsInSilentMode: true, shouldPlayInBackground: true, interruptionMode: 'doNotMix' as const };
-        console.log('[Somni] setAudioModeAsync (session start):', JSON.stringify(modeArgs));
-        await setAudioModeAsync(modeArgs);
-        if (gen !== genRef.current) return;
-        deltaPlayer.volume = 0.3;
-        deltaPlayer.loop = true;
-        deltaPlayer.play();
-        deltaActiveRef.current = true;
-        console.log('[Somni] delta player started');
-      }
+      const modeArgs = { allowsRecording: false, playsInSilentMode: true, shouldPlayInBackground: true, interruptionMode: 'doNotMix' as const };
+      console.log('[Somni] setAudioModeAsync:', JSON.stringify(modeArgs));
+      await setAudioModeAsync(modeArgs);
+      if (gen !== genRef.current) return;
       player.volume = 1;
       player.replace({ uri });
-      player.loop = false; // bedtime: JS gap restart; waketime: plays once then stops
+      player.loop = false;
       loopTypeRef.current = type;
-      player.play();
-      console.log('[Somni] player.play() called — type:', type, 'loop:', player.loop);
-      setIsPlaying(true);
       if (type === 'waketime') {
+        // Morning: no delta, play intention 5 times then stop
+        wakeLoopCountRef.current = 0;
+        player.play();
+        setIsPlaying(true);
         setIsWakePlaying(true);
         isWakePlayingRef.current = true;
         setStatus('Good morning.');
       } else {
+        // Night: delta + intention together, both fade and stop at 30 min
+        deltaPlayer.volume = 0.3;
+        deltaPlayer.loop = true;
+        deltaPlayer.play();
+        player.play();
+        setIsPlaying(true);
         setStatus('Playing — fades out from 20 min, silent at 30 min.');
         sleepTimer.current = setTimeout(() => {
           if (gen !== genRef.current) return;
@@ -154,14 +135,17 @@ export default function RecordScreen({ onShowLog }: Props) {
             if (gen !== genRef.current) { clearInterval(fadeTimer.current!); return; }
             step++;
             player.volume = Math.max(1 - step / steps, 0);
+            deltaPlayer.volume = Math.max(0.3 * (1 - step / steps), 0);
             if (step >= steps) {
               clearInterval(fadeTimer.current!); fadeTimer.current = null;
-              // Intention stops completely; delta keeps the session alive all night.
               loopTypeRef.current = null;
               player.loop = false;
               player.pause();
+              deltaPlayer.loop = false;
+              deltaPlayer.pause();
               isFading.current = false;
-              setIsPlaying(false); setStatus('Sleeping. Delta playing all night.');
+              setIsPlaying(false);
+              setStatus('Session complete.');
             }
           }, SLEEP_FADE_STEP);
         }, SLEEP_PLAY_MS);
@@ -181,7 +165,6 @@ export default function RecordScreen({ onShowLog }: Props) {
     player.pause();
     deltaPlayer.loop = false;
     deltaPlayer.pause();
-    deltaActiveRef.current = false;
     setIsPlaying(false);
     setIsWakePlaying(false);
     isWakePlayingRef.current = false;
@@ -243,7 +226,7 @@ export default function RecordScreen({ onShowLog }: Props) {
       } catch {}
     });
     const appStateSub = AppState.addEventListener('change', (state) => {
-      console.log('[Somni] AppState ->', state, '| loopType:', loopTypeRef.current, '| deltaActive:', deltaActiveRef.current, '| waking:', isWakePlayingRef.current);
+      console.log('[Somni] AppState ->', state, '| loopType:', loopTypeRef.current, '| wakeLoop:', wakeLoopCountRef.current, '| waking:', isWakePlayingRef.current);
     });
     return () => { mounted.current = false; clearInterval(timer); clearFadeTimers(); onReceive.remove(); onResponse.remove(); appStateSub.remove(); };
   }, [startLoop]);
@@ -254,9 +237,8 @@ export default function RecordScreen({ onShowLog }: Props) {
     if (loopTypeRef.current === 'bedtime') {
       // 10 s gap then restart
       const gen = genRef.current;
-      console.log('[Somni] didJustFinish (bedtime) — scheduling 10 s gap (gen', gen, ')');
       const t = setTimeout(async () => {
-        if (gen !== genRef.current) { console.log('[Somni] gap timer cancelled'); return; }
+        if (gen !== genRef.current) return;
         try {
           await player.seekTo(0);
           if (gen !== genRef.current) return;
@@ -266,19 +248,30 @@ export default function RecordScreen({ onShowLog }: Props) {
       return () => clearTimeout(t);
     }
     if (loopTypeRef.current === 'waketime') {
-      // Intention played once — stop everything and return to main screen
-      console.log('[Somni] didJustFinish (waketime) — stopping session');
-      genRef.current++;
-      loopTypeRef.current = null;
-      deltaPlayer.loop = false;
-      deltaPlayer.pause();
-      deltaActiveRef.current = false;
-      setIsPlaying(false);
-      setIsWakePlaying(false);
-      isWakePlayingRef.current = false;
-      setStatus('Good morning.');
+      wakeLoopCountRef.current++;
+      if (wakeLoopCountRef.current < WAKE_LOOPS) {
+        // More loops remaining — 10 s gap then play again
+        const gen = genRef.current;
+        const t = setTimeout(async () => {
+          if (gen !== genRef.current) return;
+          try {
+            await player.seekTo(0);
+            if (gen !== genRef.current) return;
+            player.play();
+          } catch (e) { console.log('[Somni] gap restart error:', e); }
+        }, GAP_BETWEEN_LOOPS_MS);
+        return () => clearTimeout(t);
+      } else {
+        // All 5 loops complete — stop and return to main screen
+        genRef.current++;
+        loopTypeRef.current = null;
+        setIsPlaying(false);
+        setIsWakePlaying(false);
+        isWakePlayingRef.current = false;
+        setStatus('Good morning.');
+      }
     }
-  }, [playerStatus.didJustFinish, player, deltaPlayer]);
+  }, [playerStatus.didJustFinish, player]);
 
   async function toggleRecording() {
     if (isRecording) {
@@ -357,7 +350,7 @@ export default function RecordScreen({ onShowLog }: Props) {
       trigger: { type: Notifications.SchedulableTriggerInputTypes.DAILY, hour: wh, minute: wm },
     });
     setStatus(`Sleep ${bedtime} · Wake ${waketime}`);
-    Alert.alert('Scheduled', `Sleep ${bedtime}: intention plays 20 min, fades out by 30 min, delta continues all night.\nMorning ${waketime}: tap the notification to play your intention once.`);
+    Alert.alert('Scheduled', `Sleep ${bedtime}: intention + delta play for 20 min, both fade out by 30 min.\nMorning ${waketime}: tap the notification — plays 5 times then stops.`);
   }
 
   async function callNetlify(a1: string, a2: string) {
