@@ -21,8 +21,8 @@ import Btn from './Btn';
 import { C } from './theme';
 import { LogEntry, LOG_KEY } from './types';
 
-const SLEEP_PLAY_MS   = 20 * 60 * 1000;
-const SLEEP_FADE_MS   = 10 * 60 * 1000;
+const SLEEP_PLAY_MS   = 8 * 60 * 1000;
+const SLEEP_FADE_MS   = 4 * 60 * 1000;
 const SLEEP_FADE_STEP = 500;
 const GAP_BETWEEN_LOOPS_MS = 10_000;
 const WAKE_LOOPS = 5;
@@ -133,13 +133,13 @@ export default function RecordScreen({ onShowLog }: Props) {
           }
         }, SLEEP_FADE_STEP);
       } else {
-        // Night: delta + intention together, both fade and stop at 30 min
+        // Night: delta + intention together, both fade and stop at 12 min
         deltaPlayer.volume = 0.3;
         deltaPlayer.loop = true;
         deltaPlayer.play();
         player.play();
         setIsPlaying(true);
-        setStatus('Playing — fades out from 20 min, silent at 30 min.');
+        setStatus('Playing — fades out from 8 min, silent at 12 min.');
         sleepTimer.current = setTimeout(() => {
           if (gen !== genRef.current) return;
           setStatus('Fading out...');
@@ -365,7 +365,7 @@ export default function RecordScreen({ onShowLog }: Props) {
       trigger: { type: Notifications.SchedulableTriggerInputTypes.DAILY, hour: wh, minute: wm },
     });
     setStatus(`Sleep ${bedtime} · Wake ${waketime}`);
-    Alert.alert('Scheduled', `Sleep ${bedtime}: intention + delta play for 20 min, both fade out by 30 min.\nMorning ${waketime}: tap the notification — plays 5 times then stops.`);
+    Alert.alert('Scheduled', `Sleep ${bedtime}: intention + delta play for 8 min, both fade out by 12 min.\nMorning ${waketime}: tap the notification — plays 5 times then stops.`);
   }
 
   async function callNetlify(a1: string, a2: string) {
