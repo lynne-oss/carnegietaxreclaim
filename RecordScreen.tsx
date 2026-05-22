@@ -84,7 +84,6 @@ export default function RecordScreen({ onShowLog }: Props) {
   const loopTypeRef      = useRef<'bedtime' | 'waketime' | null>(null);
   const wakeLoopCountRef = useRef(0);
   const gapTimerRef      = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const prevFinishRef    = useRef(false);
 
   function clearFadeTimers() {
     if (sleepTimer.current)  { clearTimeout(sleepTimer.current);   sleepTimer.current  = null; }
@@ -94,6 +93,10 @@ export default function RecordScreen({ onShowLog }: Props) {
 
   const startLoop = useCallback(async (uri: string, type: 'bedtime' | 'waketime') => {
     const gen = ++genRef.current;
+    // Stamp the current minute immediately so the 60-second scheduler cannot
+    // re-trigger this session — notification-triggered starts never set this.
+    const _now = new Date();
+    lastPlayedRef.current = `${String(_now.getHours()).padStart(2, '0')}:${String(_now.getMinutes()).padStart(2, '0')}`;
     isFading.current = false;
     clearFadeTimers();
     loopTypeRef.current = null;
@@ -254,12 +257,10 @@ export default function RecordScreen({ onShowLog }: Props) {
   // accidentally cancel a pending gap timer the way a useEffect dependency cleanup can.
   useEffect(() => {
     const sub = player.addListener('playbackStatusUpdate', (status) => {
-      if (!status.didJustFinish) {
-        prevFinishRef.current = false;
-        return;
-      }
-      if (prevFinishRef.current) return; // rising-edge gate: handle each finish once
-      prevFinishRef.current = true;
+      if (!status.didJustFinish) return;
+      // gapTimerRef.current non-null means a gap is already scheduled for this
+      // finish — deduplicate without relying on poll timing to reset a flag.
+      if (gapTimerRef.current) return;
 
       console.log('[Somni] finish event — loopType:', loopTypeRef.current, '| gen:', genRef.current);
 
