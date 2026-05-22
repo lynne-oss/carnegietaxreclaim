@@ -107,13 +107,15 @@ export default function RecordScreen({ onShowLog }: Props) {
       console.log('[Somni] setAudioModeAsync:', JSON.stringify(modeArgs));
       await setAudioModeAsync(modeArgs);
       if (gen !== genRef.current) return;
+      // Set volume before replace() — expo-audio may reset volume when loading
+      // a new source, so the explicit assignment must come first.
+      player.volume = type === 'waketime' ? 0 : 1;
       player.replace({ uri });
       player.loop = false;
       loopTypeRef.current = type;
       if (type === 'waketime') {
         // Morning: fade in from 0 to 0.7 over 30 s, then play remaining loops at 0.7
         wakeLoopCountRef.current = 0;
-        player.volume = 0;
         player.play();
         setIsPlaying(true);
         setIsWakePlaying(true);
@@ -122,7 +124,7 @@ export default function RecordScreen({ onShowLog }: Props) {
         const fadeSteps = WAKE_FADE_MS / SLEEP_FADE_STEP;
         let fadeStep = 0;
         fadeTimer.current = setInterval(() => {
-          if (gen !== genRef.current) { clearInterval(fadeTimer.current!); return; }
+          if (gen !== genRef.current) { clearInterval(fadeTimer.current!); fadeTimer.current = null; return; }
           fadeStep++;
           player.volume = Math.min((WAKE_TARGET_VOL * fadeStep) / fadeSteps, WAKE_TARGET_VOL);
           if (fadeStep >= fadeSteps) {
@@ -132,7 +134,6 @@ export default function RecordScreen({ onShowLog }: Props) {
         }, SLEEP_FADE_STEP);
       } else {
         // Night: delta + intention together, both fade and stop at 30 min
-        player.volume = 1;
         deltaPlayer.volume = 0.3;
         deltaPlayer.loop = true;
         deltaPlayer.play();
