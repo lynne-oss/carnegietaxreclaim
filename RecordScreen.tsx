@@ -18,7 +18,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { File as EXFile, Paths } from 'expo-file-system';
 import Btn from './Btn';
 import { C } from './theme';
-import { LogEntry, LOG_KEY } from './types';
+import { LogEntry, LOG_KEY, DIAG_LOG_KEY } from './types';
 
 const SLEEP_PLAY_MS   = 8 * 60 * 1000;
 const SLEEP_FADE_MS   = 4 * 60 * 1000;
@@ -27,6 +27,24 @@ const GAP_BETWEEN_LOOPS_MS = 10_000;
 const WAKE_LOOPS = 5;
 const WAKE_FADE_MS = 30_000;
 const WAKE_TARGET_VOL = 0.7;
+
+// Persist every [Somni] console.log line to AsyncStorage for in-app diagnostics.
+// Module-level so the intercept survives component re-renders.
+const _origLog = console.log.bind(console);
+console.log = (...args: any[]) => {
+  _origLog(...args);
+  const msg = args.map(a => (typeof a === 'string' ? a : String(a))).join(' ');
+  if (msg.startsWith('[Somni]')) {
+    const line = `${new Date().toISOString().slice(0, 10)} ${msg}`;
+    AsyncStorage.getItem(DIAG_LOG_KEY)
+      .then(raw => {
+        const arr: string[] = raw ? JSON.parse(raw) : [];
+        arr.push(line);
+        return AsyncStorage.setItem(DIAG_LOG_KEY, JSON.stringify(arr.length > 500 ? arr.slice(-500) : arr));
+      })
+      .catch(() => {});
+  }
+};
 
 const REC_URI_KEY  = '@somni_rec';
 const BEDTIME_KEY  = '@somni_bed';
