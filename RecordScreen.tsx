@@ -37,6 +37,11 @@ const NETLIFY_URL = 'https://thesomni.app/.netlify/functions/generate-intention'
 
 type SignalPhase = 'input' | 'loading' | 'result' | 'direct';
 
+function ts() {
+  const d = new Date();
+  return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')}.${String(d.getMilliseconds()).padStart(3,'0')}`;
+}
+
 Notifications.setNotificationHandler({
   handleNotification: async (notification) => {
     const isWake = notification.request.content.data?.type === 'waketime';
@@ -93,6 +98,7 @@ export default function RecordScreen({ onShowLog }: Props) {
 
   const startLoop = useCallback(async (uri: string, type: 'bedtime' | 'waketime') => {
     const gen = ++genRef.current;
+    console.log(`[Somni] startLoop ${ts()} type=${type} gen=${gen} uri=...${uri?.slice(-30)}`);
     // Stamp the current minute immediately so the 60-second scheduler cannot
     // re-trigger this session — notification-triggered starts never set this.
     const _now = new Date();
@@ -175,7 +181,7 @@ export default function RecordScreen({ onShowLog }: Props) {
   }, [player, deltaPlayer]);
 
   async function stopPlayback() {
-    console.log('[Somni] stopPlayback called');
+    console.log(`[Somni] stopPlayback ${ts()} loopType=${loopTypeRef.current} gen=${genRef.current}`);
     genRef.current++;
     isFading.current = false;
     clearFadeTimers();
@@ -219,6 +225,7 @@ export default function RecordScreen({ onShowLog }: Props) {
           try {
             const now  = new Date();
             const hhmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+            console.log(`[Somni] TICK ${ts()} hhmm=${hhmm} lastPlayed=${lastPlayedRef.current} loopType=${loopTypeRef.current}`);
             if (lastPlayedRef.current === hhmm) return;
             const [uri, bed, wake] = await Promise.all([
               AsyncStorage.getItem(REC_URI_KEY), AsyncStorage.getItem(BEDTIME_KEY), AsyncStorage.getItem(WAKETIME_KEY),
@@ -257,39 +264,48 @@ export default function RecordScreen({ onShowLog }: Props) {
   // accidentally cancel a pending gap timer the way a useEffect dependency cleanup can.
   useEffect(() => {
     const sub = player.addListener('playbackStatusUpdate', (status) => {
+      console.log(`[Somni] PSU ${ts()} playing=${status.playing} djf=${status.didJustFinish} loaded=${status.isLoaded} t=${(status.currentTime ?? 0).toFixed(2)} loopType=${loopTypeRef.current} gen=${genRef.current} gap=${gapTimerRef.current !== null} err=${status.error ?? 'none'}`);
       if (!status.didJustFinish) return;
       // gapTimerRef.current non-null means a gap is already scheduled for this
       // finish — deduplicate without relying on poll timing to reset a flag.
-      if (gapTimerRef.current) return;
+      if (gapTimerRef.current) {
+        console.log(`[Somni] FINISH ${ts()} — gap already pending, deduplicated`);
+        return;
+      }
 
-      console.log('[Somni] finish event — loopType:', loopTypeRef.current, '| gen:', genRef.current);
+      console.log(`[Somni] FINISH ${ts()} loopType=${loopTypeRef.current} gen=${genRef.current}`);
 
       if (loopTypeRef.current === 'bedtime') {
         const gen = genRef.current;
         gapTimerRef.current = setTimeout(async () => {
           gapTimerRef.current = null;
-          if (gen !== genRef.current) return;
+          console.log(`[Somni] GAP-FIRE bedtime ${ts()} gen=${gen} cur=${genRef.current}`);
+          if (gen !== genRef.current) { console.log('[Somni] GAP-FIRE bedtime stale — abort'); return; }
           try {
+            console.log(`[Somni] seekTo(0) ${ts()}`);
             await player.seekTo(0);
-            if (gen !== genRef.current) return;
+            if (gen !== genRef.current) { console.log('[Somni] GAP-FIRE bedtime stale after seekTo — abort'); return; }
+            console.log(`[Somni] play() ${ts()}`);
             player.play();
-            console.log('[Somni] bedtime gap restart complete');
+            console.log(`[Somni] bedtime gap restart complete ${ts()}`);
           } catch (e) { console.log('[Somni] gap restart error:', e); }
         }, GAP_BETWEEN_LOOPS_MS);
       }
 
       if (loopTypeRef.current === 'waketime') {
         wakeLoopCountRef.current++;
-        console.log('[Somni] wake loop', wakeLoopCountRef.current, '/', WAKE_LOOPS);
+        console.log(`[Somni] WAKE-LOOP ${wakeLoopCountRef.current}/${WAKE_LOOPS} ${ts()}`);
         if (wakeLoopCountRef.current < WAKE_LOOPS) {
           const gen = genRef.current;
           gapTimerRef.current = setTimeout(async () => {
             gapTimerRef.current = null;
-            if (gen !== genRef.current) return;
+            console.log(`[Somni] GAP-FIRE waketime ${ts()} gen=${gen} cur=${genRef.current}`);
+            if (gen !== genRef.current) { console.log('[Somni] GAP-FIRE waketime stale — abort'); return; }
             try {
               await player.seekTo(0);
-              if (gen !== genRef.current) return;
+              if (gen !== genRef.current) { console.log('[Somni] GAP-FIRE waketime stale after seekTo — abort'); return; }
               player.play();
+              console.log(`[Somni] wake loop ${wakeLoopCountRef.current} restarted ${ts()}`);
             } catch (e) { console.log('[Somni] gap restart error:', e); }
           }, GAP_BETWEEN_LOOPS_MS);
         } else {
@@ -299,11 +315,20 @@ export default function RecordScreen({ onShowLog }: Props) {
           setIsWakePlaying(false);
           isWakePlayingRef.current = false;
           setStatus('Good morning.');
+          console.log(`[Somni] wake session complete ${ts()}`);
         }
       }
     });
     return () => sub.remove();
   }, [player]);
+
+  useEffect(() => {
+    const sub = deltaPlayer.addListener('playbackStatusUpdate', (status) => {
+      if (status.playing && !status.didJustFinish && !status.error) return;
+      console.log(`[Somni] DELTA-PSU ${ts()} playing=${status.playing} djf=${status.didJustFinish} loaded=${status.isLoaded} err=${status.error ?? 'none'}`);
+    });
+    return () => sub.remove();
+  }, [deltaPlayer]);
 
   async function toggleRecording() {
     if (isRecording) {
