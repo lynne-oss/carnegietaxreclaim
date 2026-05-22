@@ -8,7 +8,6 @@ import { StatusBar } from 'expo-status-bar';
 import {
   useAudioPlayer,
   useAudioRecorder,
-  useAudioPlayerStatus,
   useAudioRecorderState,
   setAudioModeAsync,
   requestRecordingPermissionsAsync,
@@ -72,7 +71,6 @@ export default function RecordScreen({ onShowLog }: Props) {
   const recorder      = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const recorderState = useAudioRecorderState(recorder);
   const player        = useAudioPlayer(null, { keepAudioSessionActive: true, updateInterval: 60_000 });
-  const playerStatus  = useAudioPlayerStatus(player);
   // Delta binaural track — downloadFirst ensures a local file:// URI is used even on first load,
   // preventing background HTTP fetches (which iOS blocks with screen locked).
   const deltaPlayer   = useAudioPlayer(require('./assets/audio/delta.mp3'), { keepAudioSessionActive: true, updateInterval: 30_000, downloadFirst: true });
@@ -249,38 +247,23 @@ export default function RecordScreen({ onShowLog }: Props) {
     return () => { mounted.current = false; clearInterval(timer); clearFadeTimers(); onReceive.remove(); onResponse.remove(); appStateSub.remove(); };
   }, [startLoop]);
 
-  // Handle intention track finishing.
-  // IMPORTANT: do NOT return a cleanup function here. The 60 s updateInterval means
-  // didJustFinish stays true for up to 60 s, then resets to false — React's cleanup
-  // would fire on that reset and cancel the gap timer before it plays. Instead we
-  // gate on the rising edge with prevFinishRef and store the timer in gapTimerRef
-  // so startLoop / stopPlayback can cancel it explicitly via clearFadeTimers().
+  // Direct event listener for track completion — bypasses React state entirely.
+  // player.addListener fires immediately from the native AVPlayerItemDidPlayToEndTime
+  // notification. This subscription is only torn down when the player instance changes
+  // or the component unmounts — never due to a status value changing — so it cannot
+  // accidentally cancel a pending gap timer the way a useEffect dependency cleanup can.
   useEffect(() => {
-    if (!playerStatus.didJustFinish) {
-      prevFinishRef.current = false; // reset so we can detect the next finish
-      return;
-    }
-    if (prevFinishRef.current) return; // already handled this finish event
-    prevFinishRef.current = true;
+    const sub = player.addListener('playbackStatusUpdate', (status) => {
+      if (!status.didJustFinish) {
+        prevFinishRef.current = false;
+        return;
+      }
+      if (prevFinishRef.current) return; // rising-edge gate: handle each finish once
+      prevFinishRef.current = true;
 
-    console.log('[Somni] didJustFinish — loopType:', loopTypeRef.current, '| gen:', genRef.current);
+      console.log('[Somni] finish event — loopType:', loopTypeRef.current, '| gen:', genRef.current);
 
-    if (loopTypeRef.current === 'bedtime') {
-      const gen = genRef.current;
-      gapTimerRef.current = setTimeout(async () => {
-        gapTimerRef.current = null;
-        if (gen !== genRef.current) return;
-        try {
-          await player.seekTo(0);
-          if (gen !== genRef.current) return;
-          player.play();
-        } catch (e) { console.log('[Somni] gap restart error:', e); }
-      }, GAP_BETWEEN_LOOPS_MS);
-    }
-
-    if (loopTypeRef.current === 'waketime') {
-      wakeLoopCountRef.current++;
-      if (wakeLoopCountRef.current < WAKE_LOOPS) {
+      if (loopTypeRef.current === 'bedtime') {
         const gen = genRef.current;
         gapTimerRef.current = setTimeout(async () => {
           gapTimerRef.current = null;
@@ -289,18 +272,37 @@ export default function RecordScreen({ onShowLog }: Props) {
             await player.seekTo(0);
             if (gen !== genRef.current) return;
             player.play();
+            console.log('[Somni] bedtime gap restart complete');
           } catch (e) { console.log('[Somni] gap restart error:', e); }
         }, GAP_BETWEEN_LOOPS_MS);
-      } else {
-        genRef.current++;
-        loopTypeRef.current = null;
-        setIsPlaying(false);
-        setIsWakePlaying(false);
-        isWakePlayingRef.current = false;
-        setStatus('Good morning.');
       }
-    }
-  }, [playerStatus.didJustFinish, player]);
+
+      if (loopTypeRef.current === 'waketime') {
+        wakeLoopCountRef.current++;
+        console.log('[Somni] wake loop', wakeLoopCountRef.current, '/', WAKE_LOOPS);
+        if (wakeLoopCountRef.current < WAKE_LOOPS) {
+          const gen = genRef.current;
+          gapTimerRef.current = setTimeout(async () => {
+            gapTimerRef.current = null;
+            if (gen !== genRef.current) return;
+            try {
+              await player.seekTo(0);
+              if (gen !== genRef.current) return;
+              player.play();
+            } catch (e) { console.log('[Somni] gap restart error:', e); }
+          }, GAP_BETWEEN_LOOPS_MS);
+        } else {
+          genRef.current++;
+          loopTypeRef.current = null;
+          setIsPlaying(false);
+          setIsWakePlaying(false);
+          isWakePlayingRef.current = false;
+          setStatus('Good morning.');
+        }
+      }
+    });
+    return () => sub.remove();
+  }, [player]);
 
   async function toggleRecording() {
     if (isRecording) {
