@@ -85,10 +85,13 @@ export default function RecordScreen({ onShowLog }: Props) {
   const isWakePlayingRef = useRef(false);
   const loopTypeRef      = useRef<'bedtime' | 'waketime' | null>(null);
   const wakeLoopCountRef = useRef(0);
+  const gapTimerRef      = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const prevFinishRef    = useRef(false);
 
   function clearFadeTimers() {
-    if (sleepTimer.current) { clearTimeout(sleepTimer.current);  sleepTimer.current = null; }
-    if (fadeTimer.current)  { clearInterval(fadeTimer.current);  fadeTimer.current  = null; }
+    if (sleepTimer.current)  { clearTimeout(sleepTimer.current);   sleepTimer.current  = null; }
+    if (fadeTimer.current)   { clearInterval(fadeTimer.current);   fadeTimer.current   = null; }
+    if (gapTimerRef.current) { clearTimeout(gapTimerRef.current);  gapTimerRef.current = null; }
   }
 
   const startLoop = useCallback(async (uri: string, type: 'bedtime' | 'waketime') => {
@@ -246,13 +249,26 @@ export default function RecordScreen({ onShowLog }: Props) {
     return () => { mounted.current = false; clearInterval(timer); clearFadeTimers(); onReceive.remove(); onResponse.remove(); appStateSub.remove(); };
   }, [startLoop]);
 
-  // Handle intention track finishing
+  // Handle intention track finishing.
+  // IMPORTANT: do NOT return a cleanup function here. The 60 s updateInterval means
+  // didJustFinish stays true for up to 60 s, then resets to false — React's cleanup
+  // would fire on that reset and cancel the gap timer before it plays. Instead we
+  // gate on the rising edge with prevFinishRef and store the timer in gapTimerRef
+  // so startLoop / stopPlayback can cancel it explicitly via clearFadeTimers().
   useEffect(() => {
-    if (!playerStatus.didJustFinish) return;
+    if (!playerStatus.didJustFinish) {
+      prevFinishRef.current = false; // reset so we can detect the next finish
+      return;
+    }
+    if (prevFinishRef.current) return; // already handled this finish event
+    prevFinishRef.current = true;
+
+    console.log('[Somni] didJustFinish — loopType:', loopTypeRef.current, '| gen:', genRef.current);
+
     if (loopTypeRef.current === 'bedtime') {
-      // 10 s gap then restart
       const gen = genRef.current;
-      const t = setTimeout(async () => {
+      gapTimerRef.current = setTimeout(async () => {
+        gapTimerRef.current = null;
         if (gen !== genRef.current) return;
         try {
           await player.seekTo(0);
@@ -260,14 +276,14 @@ export default function RecordScreen({ onShowLog }: Props) {
           player.play();
         } catch (e) { console.log('[Somni] gap restart error:', e); }
       }, GAP_BETWEEN_LOOPS_MS);
-      return () => clearTimeout(t);
     }
+
     if (loopTypeRef.current === 'waketime') {
       wakeLoopCountRef.current++;
       if (wakeLoopCountRef.current < WAKE_LOOPS) {
-        // More loops remaining — 10 s gap then play again
         const gen = genRef.current;
-        const t = setTimeout(async () => {
+        gapTimerRef.current = setTimeout(async () => {
+          gapTimerRef.current = null;
           if (gen !== genRef.current) return;
           try {
             await player.seekTo(0);
@@ -275,9 +291,7 @@ export default function RecordScreen({ onShowLog }: Props) {
             player.play();
           } catch (e) { console.log('[Somni] gap restart error:', e); }
         }, GAP_BETWEEN_LOOPS_MS);
-        return () => clearTimeout(t);
       } else {
-        // All 5 loops complete — stop and return to main screen
         genRef.current++;
         loopTypeRef.current = null;
         setIsPlaying(false);
