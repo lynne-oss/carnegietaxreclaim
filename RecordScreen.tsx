@@ -417,12 +417,6 @@ export default function RecordScreen({ onShowLog }: Props) {
     if ([bh, bm, wh, wm].some(isNaN) || bh > 23 || bm > 59 || wh > 23 || wm > 59) {
       Alert.alert('Invalid time', 'Use 24-hour HH:MM format, e.g. 22:30 or 07:00.'); return;
     }
-    // Stamp current minute before writing new times to AsyncStorage.
-    // Without this, the scheduler can read the freshly-saved bedtime in the
-    // same tick it was written and immediately start a session.
-    const _sched = new Date();
-    lastPlayedRef.current = `${String(_sched.getHours()).padStart(2, '0')}:${String(_sched.getMinutes()).padStart(2, '0')}`;
-    console.log(`[Somni] schedule() stamped lastPlayed=${lastPlayedRef.current}`);
     await AsyncStorage.multiSet([[BEDTIME_KEY, bedtime], [WAKETIME_KEY, waketime]]);
     await Notifications.cancelAllScheduledNotificationsAsync();
     await Notifications.scheduleNotificationAsync({
