@@ -124,6 +124,8 @@ export default function RecordScreen({ onShowLog }: Props) {
     isFading.current = false;
     clearFadeTimers();
     loopTypeRef.current = null;
+    isWakePlayingRef.current = false;
+    setIsWakePlaying(false);
     try {
       player.loop = false;
       player.pause();
