@@ -59,10 +59,18 @@ export default function App() {
   const goBack = () => setTab('main');
 
   if (!fontsReady) return <View style={{ flex: 1, backgroundColor: '#0B0B0D' }} />;
-  if (tab === 'log') return (
-    <LogErrorBoundary onBack={goBack}>
-      <LogScreen onBack={goBack} />
-    </LogErrorBoundary>
+
+  return (
+    <>
+      {/* RecordScreen is always mounted so timers and audio survive Log navigation */}
+      <View style={[{ flex: 1 }, tab === 'log' && { display: 'none' }]}>
+        <RecordScreen onShowLog={() => setTab('log')} />
+      </View>
+      {tab === 'log' && (
+        <LogErrorBoundary onBack={goBack}>
+          <LogScreen onBack={goBack} />
+        </LogErrorBoundary>
+      )}
+    </>
   );
-  return <RecordScreen onShowLog={() => setTab('log')} />;
 }
