@@ -16,6 +16,7 @@ import {
 import * as Notifications from 'expo-notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { File as EXFile, Paths } from 'expo-file-system';
+import BackgroundTimer from 'react-native-background-timer';
 import Btn from './Btn';
 import { C } from './theme';
 import { LogEntry, LOG_KEY, DIAG_LOG_KEY } from './types';
@@ -106,12 +107,14 @@ export default function RecordScreen({ onShowLog }: Props) {
   const isWakePlayingRef = useRef(false);
   const loopTypeRef      = useRef<'bedtime' | 'waketime' | null>(null);
   const wakeLoopCountRef = useRef(0);
-  const gapTimerRef      = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const gapTimerRef         = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const bedtimeGapTimerRef  = useRef<number | null>(null);
 
   function clearFadeTimers() {
-    if (sleepTimer.current)  { clearTimeout(sleepTimer.current);   sleepTimer.current  = null; }
-    if (fadeTimer.current)   { clearInterval(fadeTimer.current);   fadeTimer.current   = null; }
-    if (gapTimerRef.current) { clearTimeout(gapTimerRef.current);  gapTimerRef.current = null; }
+    if (sleepTimer.current)        { clearTimeout(sleepTimer.current);                    sleepTimer.current        = null; }
+    if (fadeTimer.current)         { clearInterval(fadeTimer.current);                    fadeTimer.current         = null; }
+    if (gapTimerRef.current)       { clearTimeout(gapTimerRef.current);                   gapTimerRef.current       = null; }
+    if (bedtimeGapTimerRef.current){ BackgroundTimer.clearTimeout(bedtimeGapTimerRef.current); bedtimeGapTimerRef.current = null; }
   }
 
   const startLoop = useCallback(async (uri: string, type: 'bedtime' | 'waketime') => {
@@ -287,11 +290,11 @@ export default function RecordScreen({ onShowLog }: Props) {
   // accidentally cancel a pending gap timer the way a useEffect dependency cleanup can.
   useEffect(() => {
     const sub = player.addListener('playbackStatusUpdate', (status) => {
-      console.log(`[Somni] PSU ${ts()} playing=${status.playing} djf=${status.didJustFinish} loaded=${status.isLoaded} t=${(status.currentTime ?? 0).toFixed(2)} loopType=${loopTypeRef.current} gen=${genRef.current} gap=${gapTimerRef.current !== null} err=${status.error ?? 'none'}`);
+      console.log(`[Somni] PSU ${ts()} playing=${status.playing} djf=${status.didJustFinish} loaded=${status.isLoaded} t=${(status.currentTime ?? 0).toFixed(2)} loopType=${loopTypeRef.current} gen=${genRef.current} gap=${gapTimerRef.current !== null || bedtimeGapTimerRef.current !== null} err=${status.error ?? 'none'}`);
       if (!status.didJustFinish) return;
-      // gapTimerRef.current non-null means a gap is already scheduled for this
-      // finish — deduplicate without relying on poll timing to reset a flag.
-      if (gapTimerRef.current) {
+      // gapTimerRef.current / bedtimeGapTimerRef.current non-null means a gap is
+      // already scheduled — deduplicate without relying on poll timing to reset a flag.
+      if (gapTimerRef.current || bedtimeGapTimerRef.current) {
         console.log(`[Somni] FINISH ${ts()} — gap already pending, deduplicated`);
         return;
       }
@@ -300,18 +303,20 @@ export default function RecordScreen({ onShowLog }: Props) {
 
       if (loopTypeRef.current === 'bedtime') {
         const gen = genRef.current;
-        gapTimerRef.current = setTimeout(async () => {
-          gapTimerRef.current = null;
+        bedtimeGapTimerRef.current = BackgroundTimer.setTimeout(() => {
+          bedtimeGapTimerRef.current = null;
           console.log(`[Somni] GAP-FIRE bedtime ${ts()} gen=${gen} cur=${genRef.current}`);
           if (gen !== genRef.current) { console.log('[Somni] GAP-FIRE bedtime stale — abort'); return; }
-          try {
-            console.log(`[Somni] seekTo(0) ${ts()}`);
-            await player.seekTo(0);
-            if (gen !== genRef.current) { console.log('[Somni] GAP-FIRE bedtime stale after seekTo — abort'); return; }
-            console.log(`[Somni] play() ${ts()}`);
-            player.play();
-            console.log(`[Somni] bedtime gap restart complete ${ts()}`);
-          } catch (e) { console.log('[Somni] gap restart error:', e); }
+          (async () => {
+            try {
+              console.log(`[Somni] seekTo(0) ${ts()}`);
+              await player.seekTo(0);
+              if (gen !== genRef.current) { console.log('[Somni] GAP-FIRE bedtime stale after seekTo — abort'); return; }
+              console.log(`[Somni] play() ${ts()}`);
+              player.play();
+              console.log(`[Somni] bedtime gap restart complete ${ts()}`);
+            } catch (e) { console.log('[Somni] gap restart error:', e); }
+          })();
         }, GAP_BETWEEN_LOOPS_MS);
       }
 
