@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, ScrollView,
   SafeAreaView, StyleSheet, Alert, ActivityIndicator,
@@ -94,10 +94,15 @@ export default function RecordScreen({ onShowLog }: Props) {
 
   const recorder      = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const recorderState = useAudioRecorderState(recorder);
-  const player        = useAudioPlayer(null, { keepAudioSessionActive: true, updateInterval: 60_000 });
+  // Memoized option objects so useAudioPlayer returns the same player instance across
+  // renders — prevents startLoop's useCallback from getting a new identity, which would
+  // otherwise cause useEffect([startLoop]) to tear down and re-run mid-session.
+  const playerOpts  = useMemo(() => ({ keepAudioSessionActive: true, updateInterval: 60_000 }), []);
+  const deltaOpts   = useMemo(() => ({ keepAudioSessionActive: true, updateInterval: 30_000, downloadFirst: true }), []);
+  const player      = useAudioPlayer(null, playerOpts);
   // Delta binaural track — downloadFirst ensures a local file:// URI is used even on first load,
   // preventing background HTTP fetches (which iOS blocks with screen locked).
-  const deltaPlayer   = useAudioPlayer(require('./assets/audio/delta.mp3'), { keepAudioSessionActive: true, updateInterval: 30_000, downloadFirst: true });
+  const deltaPlayer = useAudioPlayer(require('./assets/audio/delta.mp3'), deltaOpts);
 
   const genRef           = useRef(0);
   const sleepTimer       = useRef<ReturnType<typeof setTimeout>  | null>(null);
@@ -203,6 +208,12 @@ export default function RecordScreen({ onShowLog }: Props) {
     }
   }, [player, deltaPlayer]);
 
+  // Ref so the scheduler useEffect can always call the latest startLoop without
+  // listing it as a dependency — prevents the effect from tearing down mid-session
+  // if startLoop's identity ever changes.
+  const startLoopRef = useRef(startLoop);
+  startLoopRef.current = startLoop;
+
   async function stopPlayback() {
     console.log(`[Somni] stopPlayback ${ts()} loopType=${loopTypeRef.current} gen=${genRef.current}`);
     genRef.current++;
@@ -242,7 +253,7 @@ export default function RecordScreen({ onShowLog }: Props) {
         const lastResponse = await Notifications.getLastNotificationResponseAsync();
         if (!mounted.current) return;
         const launchType = lastResponse?.notification.request.content.data?.type as 'bedtime' | 'waketime' | undefined;
-        if ((launchType === 'bedtime' || launchType === 'waketime') && savedUri) startLoop(savedUri, launchType);
+        if ((launchType === 'bedtime' || launchType === 'waketime') && savedUri) startLoopRef.current(savedUri, launchType);
         timer = setInterval(async () => {
           if (!mounted.current) return;
           try {
@@ -257,8 +268,8 @@ export default function RecordScreen({ onShowLog }: Props) {
             // Re-check after the async gap — a notification-triggered startLoop
             // may have already stamped lastPlayedRef while we were awaiting.
             if (lastPlayedRef.current === hhmm) return;
-            if (uri && hhmm === bed) { lastPlayedRef.current = hhmm; startLoop(uri, 'bedtime'); }
-            if (uri && hhmm === wake && !isWakePlayingRef.current) { lastPlayedRef.current = hhmm; startLoop(uri, 'waketime'); }
+            if (uri && hhmm === bed) { lastPlayedRef.current = hhmm; startLoopRef.current(uri, 'bedtime'); }
+            if (uri && hhmm === wake && !isWakePlayingRef.current) { lastPlayedRef.current = hhmm; startLoopRef.current(uri, 'waketime'); }
           } catch {}
         }, 60_000);
       } catch {}
@@ -266,22 +277,22 @@ export default function RecordScreen({ onShowLog }: Props) {
     const onReceive = Notifications.addNotificationReceivedListener(async (notif) => {
       try {
         const t = notif.request.content.data?.type as 'bedtime' | 'waketime' | undefined;
-        if (t === 'bedtime') { const uri = await AsyncStorage.getItem(REC_URI_KEY); if (uri) startLoop(uri, t); }
-        if (t === 'waketime' && !isWakePlayingRef.current) { const uri = await AsyncStorage.getItem(REC_URI_KEY); if (uri) startLoop(uri, t); }
+        if (t === 'bedtime') { const uri = await AsyncStorage.getItem(REC_URI_KEY); if (uri) startLoopRef.current(uri, t); }
+        if (t === 'waketime' && !isWakePlayingRef.current) { const uri = await AsyncStorage.getItem(REC_URI_KEY); if (uri) startLoopRef.current(uri, t); }
       } catch {}
     });
     const onResponse = Notifications.addNotificationResponseReceivedListener(async (resp) => {
       try {
         const t = resp.notification.request.content.data?.type as 'bedtime' | 'waketime' | undefined;
-        if (t === 'bedtime') { const uri = await AsyncStorage.getItem(REC_URI_KEY); if (uri) startLoop(uri, t); }
-        if (t === 'waketime' && !isWakePlayingRef.current) { const uri = await AsyncStorage.getItem(REC_URI_KEY); if (uri) startLoop(uri, t); }
+        if (t === 'bedtime') { const uri = await AsyncStorage.getItem(REC_URI_KEY); if (uri) startLoopRef.current(uri, t); }
+        if (t === 'waketime' && !isWakePlayingRef.current) { const uri = await AsyncStorage.getItem(REC_URI_KEY); if (uri) startLoopRef.current(uri, t); }
       } catch {}
     });
     const appStateSub = AppState.addEventListener('change', (state) => {
       console.log('[Somni] AppState ->', state, '| loopType:', loopTypeRef.current, '| wakeLoop:', wakeLoopCountRef.current, '| waking:', isWakePlayingRef.current);
     });
     return () => { mounted.current = false; clearInterval(timer); clearFadeTimers(); onReceive.remove(); onResponse.remove(); appStateSub.remove(); };
-  }, [startLoop]);
+  }, []);
 
   // Direct event listener for track completion — bypasses React state entirely.
   // player.addListener fires immediately from the native AVPlayerItemDidPlayToEndTime
