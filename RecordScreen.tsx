@@ -119,7 +119,7 @@ export default function RecordScreen({ onShowLog }: Props) {
     if (sleepTimer.current)        { clearTimeout(sleepTimer.current);                    sleepTimer.current        = null; }
     if (fadeTimer.current)         { clearInterval(fadeTimer.current);                    fadeTimer.current         = null; }
     if (gapTimerRef.current)       { clearTimeout(gapTimerRef.current);                   gapTimerRef.current       = null; }
-    if (bedtimeGapTimerRef.current){ BackgroundTimer.clearTimeout(bedtimeGapTimerRef.current); bedtimeGapTimerRef.current = null; }
+    if (bedtimeGapTimerRef.current){ try { BackgroundTimer.clearTimeout(bedtimeGapTimerRef.current); } catch (e) { console.log('[Somni] BackgroundTimer.clearTimeout failed:', e); } bedtimeGapTimerRef.current = null; }
   }
 
   const startLoop = useCallback(async (uri: string, type: 'bedtime' | 'waketime') => {
@@ -162,13 +162,15 @@ export default function RecordScreen({ onShowLog }: Props) {
         const fadeSteps = WAKE_FADE_MS / SLEEP_FADE_STEP;
         let fadeStep = 0;
         fadeTimer.current = setInterval(() => {
-          if (gen !== genRef.current) { clearInterval(fadeTimer.current!); fadeTimer.current = null; return; }
-          fadeStep++;
-          player.volume = Math.min((WAKE_TARGET_VOL * fadeStep) / fadeSteps, WAKE_TARGET_VOL);
-          if (fadeStep >= fadeSteps) {
-            clearInterval(fadeTimer.current!);
-            fadeTimer.current = null;
-          }
+          try {
+            if (gen !== genRef.current) { clearInterval(fadeTimer.current!); fadeTimer.current = null; return; }
+            fadeStep++;
+            player.volume = Math.min((WAKE_TARGET_VOL * fadeStep) / fadeSteps, WAKE_TARGET_VOL);
+            if (fadeStep >= fadeSteps) {
+              clearInterval(fadeTimer.current!);
+              fadeTimer.current = null;
+            }
+          } catch (e) { console.log('[Somni] wake fade interval error:', e); }
         }, SLEEP_FADE_STEP);
       } else {
         // Night: delta + intention together, both fade and stop at 12 min
@@ -185,21 +187,23 @@ export default function RecordScreen({ onShowLog }: Props) {
           const steps = SLEEP_FADE_MS / SLEEP_FADE_STEP;
           let step = 0;
           fadeTimer.current = setInterval(() => {
-            if (gen !== genRef.current) { clearInterval(fadeTimer.current!); return; }
-            step++;
-            player.volume = Math.max(1 - step / steps, 0);
-            deltaPlayer.volume = Math.max(0.3 * (1 - step / steps), 0);
-            if (step >= steps) {
-              clearInterval(fadeTimer.current!); fadeTimer.current = null;
-              loopTypeRef.current = null;
-              player.loop = false;
-              player.pause();
-              deltaPlayer.loop = false;
-              deltaPlayer.pause();
-              isFading.current = false;
-              setIsPlaying(false);
-              setStatus('Session complete.');
-            }
+            try {
+              if (gen !== genRef.current) { clearInterval(fadeTimer.current!); return; }
+              step++;
+              player.volume = Math.max(1 - step / steps, 0);
+              deltaPlayer.volume = Math.max(0.3 * (1 - step / steps), 0);
+              if (step >= steps) {
+                clearInterval(fadeTimer.current!); fadeTimer.current = null;
+                loopTypeRef.current = null;
+                player.loop = false;
+                player.pause();
+                deltaPlayer.loop = false;
+                deltaPlayer.pause();
+                isFading.current = false;
+                setIsPlaying(false);
+                setStatus('Session complete.');
+              }
+            } catch (e) { console.log('[Somni] sleep fade interval error:', e); }
           }, SLEEP_FADE_STEP);
         }, SLEEP_PLAY_MS);
       }

@@ -13,8 +13,7 @@
       "infoPlist": {
         "NSMicrophoneUsageDescription": "The Somni records audio for sleep and wake playback.",
         "UIBackgroundModes": [
-          "audio",
-          "fetch"
+          "audio"
         ],
         "ITSAppUsesNonExemptEncryption": false
       }
