@@ -269,7 +269,7 @@ export default function RecordScreen({ onShowLog }: Props) {
             // may have already stamped lastPlayedRef while we were awaiting.
             if (lastPlayedRef.current === hhmm) return;
             if (uri && hhmm === bed && loopTypeRef.current === null) { lastPlayedRef.current = hhmm; startLoopRef.current(uri, 'bedtime'); }
-            if (uri && hhmm === wake && !isWakePlayingRef.current) { lastPlayedRef.current = hhmm; startLoopRef.current(uri, 'waketime'); }
+            if (uri && hhmm === wake && loopTypeRef.current === null) { lastPlayedRef.current = hhmm; startLoopRef.current(uri, 'waketime'); }
           } catch {}
         }, 60_000);
       } catch {}
@@ -277,15 +277,15 @@ export default function RecordScreen({ onShowLog }: Props) {
     const onReceive = Notifications.addNotificationReceivedListener(async (notif) => {
       try {
         const t = notif.request.content.data?.type as 'bedtime' | 'waketime' | undefined;
-        if (t === 'bedtime') { const uri = await AsyncStorage.getItem(REC_URI_KEY); if (uri) startLoopRef.current(uri, t); }
-        if (t === 'waketime' && !isWakePlayingRef.current) { const uri = await AsyncStorage.getItem(REC_URI_KEY); if (uri) startLoopRef.current(uri, t); }
+        if (t === 'bedtime' && loopTypeRef.current === null) { const uri = await AsyncStorage.getItem(REC_URI_KEY); if (uri) startLoopRef.current(uri, t); }
+        if (t === 'waketime' && loopTypeRef.current === null) { const uri = await AsyncStorage.getItem(REC_URI_KEY); if (uri) startLoopRef.current(uri, t); }
       } catch {}
     });
     const onResponse = Notifications.addNotificationResponseReceivedListener(async (resp) => {
       try {
         const t = resp.notification.request.content.data?.type as 'bedtime' | 'waketime' | undefined;
-        if (t === 'bedtime') { const uri = await AsyncStorage.getItem(REC_URI_KEY); if (uri) startLoopRef.current(uri, t); }
-        if (t === 'waketime' && !isWakePlayingRef.current) { const uri = await AsyncStorage.getItem(REC_URI_KEY); if (uri) startLoopRef.current(uri, t); }
+        if (t === 'bedtime' && loopTypeRef.current === null) { const uri = await AsyncStorage.getItem(REC_URI_KEY); if (uri) startLoopRef.current(uri, t); }
+        if (t === 'waketime' && loopTypeRef.current === null) { const uri = await AsyncStorage.getItem(REC_URI_KEY); if (uri) startLoopRef.current(uri, t); }
       } catch {}
     });
     const appStateSub = AppState.addEventListener('change', (state) => {
