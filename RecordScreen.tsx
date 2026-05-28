@@ -268,7 +268,7 @@ export default function RecordScreen({ onShowLog }: Props) {
             // Re-check after the async gap — a notification-triggered startLoop
             // may have already stamped lastPlayedRef while we were awaiting.
             if (lastPlayedRef.current === hhmm) return;
-            if (uri && hhmm === bed) { lastPlayedRef.current = hhmm; startLoopRef.current(uri, 'bedtime'); }
+            if (uri && hhmm === bed && loopTypeRef.current === null) { lastPlayedRef.current = hhmm; startLoopRef.current(uri, 'bedtime'); }
             if (uri && hhmm === wake && !isWakePlayingRef.current) { lastPlayedRef.current = hhmm; startLoopRef.current(uri, 'waketime'); }
           } catch {}
         }, 60_000);
