@@ -257,7 +257,7 @@ export default function RecordScreen({ onShowLog }: Props) {
         const lastResponse = await Notifications.getLastNotificationResponseAsync();
         if (!mounted.current) return;
         const launchType = lastResponse?.notification.request.content.data?.type as 'bedtime' | 'waketime' | undefined;
-        if ((launchType === 'bedtime' || launchType === 'waketime') && savedUri) startLoopRef.current(savedUri, launchType);
+        if ((launchType === 'bedtime' || launchType === 'waketime') && savedUri && loopTypeRef.current === null) startLoopRef.current(savedUri, launchType);
         timer = setInterval(async () => {
           if (!mounted.current) return;
           try {
