@@ -314,7 +314,7 @@ export default function RecordScreen({ onShowLog }: Props) {
 
       if (loopTypeRef.current === 'bedtime') {
         const gen = genRef.current;
-        bedtimeGapTimerRef.current = BackgroundTimer.setTimeout(() => {
+        try { bedtimeGapTimerRef.current = BackgroundTimer.setTimeout(() => {
           bedtimeGapTimerRef.current = null;
           console.log(`[Somni] GAP-FIRE bedtime ${ts()} gen=${gen} cur=${genRef.current}`);
           if (gen !== genRef.current) { console.log('[Somni] GAP-FIRE bedtime stale — abort'); return; }
@@ -328,7 +328,7 @@ export default function RecordScreen({ onShowLog }: Props) {
               console.log(`[Somni] bedtime gap restart complete ${ts()}`);
             } catch (e) { console.log('[Somni] gap restart error:', e); }
           })();
-        }, GAP_BETWEEN_LOOPS_MS);
+        }, GAP_BETWEEN_LOOPS_MS); } catch (e) { console.log('[Somni] BackgroundTimer.setTimeout failed:', e); }
       }
 
       if (loopTypeRef.current === 'waketime') {
