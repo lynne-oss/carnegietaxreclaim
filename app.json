@@ -29,7 +29,8 @@
     },
     "plugins": [
       "expo-notifications",
-      "./plugins/withFixedAppDelegate"
+      "./plugins/withFixedAppDelegate",
+      "./plugins/withSomniAudio"
     ],
     "extra": {
       "eas": {
