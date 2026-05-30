@@ -4,10 +4,7 @@ const fs = require('fs');
 
 const SOURCE_DIR = path.join(__dirname, '..', 'modules', 'somni-audio', 'ios');
 
-// ─── Step 1: Copy Swift file + register in ExpoModulesProvider ───────────────
-// withDangerousMod gives us direct filesystem access during prebuild.
-// By this point expo-modules-autolinking has already written ExpoModulesProvider.swift,
-// so we can patch it to include SomniAudioModule.self in getModuleClasses().
+// ─── Step 1: Copy Swift file, delete stale .m, register in ExpoModulesProvider
 function withCopySomniFiles(config) {
   return withDangerousMod(config, [
     'ios',
@@ -15,6 +12,13 @@ function withCopySomniFiles(config) {
       const iosRoot = config.modRequest.platformProjectRoot;
       const projectName = config.modRequest.projectName;
       const targetDir = path.join(iosRoot, projectName);
+
+      // Delete the ObjC bridge file if it was copied by a previous prebuild
+      const staleM = path.join(targetDir, 'SomniAudioModule.m');
+      if (fs.existsSync(staleM)) {
+        fs.unlinkSync(staleM);
+        console.log('[withSomniAudio] Deleted stale SomniAudioModule.m from ios directory');
+      }
 
       // Copy the Swift source file into the generated iOS project folder
       const src = path.join(SOURCE_DIR, 'SomniAudioModule.swift');
@@ -55,7 +59,7 @@ function withCopySomniFiles(config) {
   ]);
 }
 
-// ─── Step 2: Register Swift file in project.pbxproj ──────────────────────────
+// ─── Step 2: Scrub .m from pbxproj + register Swift file ─────────────────────
 // withXcodeProject adds SomniAudioModule.swift to the compiled sources build
 // phase so Xcode compiles it as part of the app target.
 function withXcodeSomniFiles(config) {
@@ -65,10 +69,66 @@ function withXcodeSomniFiles(config) {
 
     const targetUUID = xcodeProject.getFirstTarget().uuid;
     const groupKey = xcodeProject.findPBXGroupKey({ name: projectName });
-    const filePath = `${projectName}/SomniAudioModule.swift`;
 
-    if (!xcodeProject.hasFile(filePath)) {
-      xcodeProject.addSourceFile(filePath, { target: targetUUID }, groupKey);
+    // Remove SomniAudioModule.m from all pbxproj sections if still registered.
+    // The old plugin added it; expo prebuild --clean regenerates project.pbxproj
+    // from the config plugin output, so this guard handles the case where a
+    // cached prebuild carries the stale entry forward.
+    const mFilePath = `${projectName}/SomniAudioModule.m`;
+    if (xcodeProject.hasFile(mFilePath)) {
+      const objects = xcodeProject.hash.project.objects;
+
+      // 1. Find the PBXFileReference UUID for the .m file
+      const fileRefs = objects.PBXFileReference || {};
+      let fileRefUUID = null;
+      for (const [uuid, ref] of Object.entries(fileRefs)) {
+        if (uuid.endsWith('_comment')) continue;
+        const p = ref.path && ref.path.replace(/^"(.*)"$/, '$1');
+        if (p === mFilePath || p === 'SomniAudioModule.m') {
+          fileRefUUID = uuid;
+          break;
+        }
+      }
+
+      if (fileRefUUID) {
+        // 2. Collect PBXBuildFile UUIDs that point to this fileRef
+        const buildFiles = objects.PBXBuildFile || {};
+        const buildFileUUIDs = Object.entries(buildFiles)
+          .filter(([uuid, bf]) => !uuid.endsWith('_comment') && bf.fileRef === fileRefUUID)
+          .map(([uuid]) => uuid);
+
+        // 3. Remove those entries from every PBXSourcesBuildPhase files array
+        const sourcePhases = objects.PBXSourcesBuildPhase || {};
+        for (const [uuid, phase] of Object.entries(sourcePhases)) {
+          if (uuid.endsWith('_comment') || !Array.isArray(phase.files)) continue;
+          phase.files = phase.files.filter(f => !buildFileUUIDs.includes(f.value));
+        }
+
+        // 4. Delete the PBXBuildFile entries (and their _comment siblings)
+        for (const uuid of buildFileUUIDs) {
+          delete buildFiles[uuid];
+          delete buildFiles[`${uuid}_comment`];
+        }
+
+        // 5. Delete the PBXFileReference entry (and _comment)
+        delete fileRefs[fileRefUUID];
+        delete fileRefs[`${fileRefUUID}_comment`];
+
+        // 6. Remove from every PBXGroup children array
+        const groups = objects.PBXGroup || {};
+        for (const [uuid, group] of Object.entries(groups)) {
+          if (uuid.endsWith('_comment') || !Array.isArray(group.children)) continue;
+          group.children = group.children.filter(c => c.value !== fileRefUUID);
+        }
+
+        console.log('[withSomniAudio] Removed SomniAudioModule.m from project.pbxproj');
+      }
+    }
+
+    // Add SomniAudioModule.swift to the compiled sources build phase
+    const swiftFilePath = `${projectName}/SomniAudioModule.swift`;
+    if (!xcodeProject.hasFile(swiftFilePath)) {
+      xcodeProject.addSourceFile(swiftFilePath, { target: targetUUID }, groupKey);
       console.log('[withSomniAudio] Added SomniAudioModule.swift to Xcode project');
     }
 
