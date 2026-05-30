@@ -1,10 +1,7 @@
-import Foundation
+import ExpoModulesCore
 import AVFoundation
 
-@objc(SomniAudioModule)
-class SomniAudioModule: NSObject, AVAudioPlayerDelegate {
-
-  @objc static func requiresMainQueueSetup() -> Bool { return false }
+public class SomniAudioModule: Module, AVAudioPlayerDelegate {
 
   // MARK: - State
 
@@ -24,6 +21,102 @@ class SomniAudioModule: NSObject, AVAudioPlayerDelegate {
   private var morningLoopCount = 0
   private var isFadingOut = false
 
+  // MARK: - Module Definition
+
+  public func definition() -> ModuleDefinition {
+    Name("SomniAudio")
+
+    AsyncFunction("startBedtime") { (voicePath: String, deltaPath: String, promise: Promise) in
+      DispatchQueue.main.async { [weak self] in
+        guard let self = self else { return }
+        self.tearDownAll()
+        do {
+          try self.configureSession()
+
+          let voiceURL = self.url(from: voicePath)
+          let deltaURL = self.url(from: deltaPath)
+          self.voiceURL = voiceURL
+          self.isBedtimeSession = true
+          self.isMorningSession = false
+          self.morningLoopCount = 0
+          self.isFadingOut = false
+
+          // Delta track loops forever beneath the voice at lower volume
+          self.deltaPlayer = try AVAudioPlayer(contentsOf: deltaURL)
+          self.deltaPlayer?.volume = 0.3
+          self.deltaPlayer?.numberOfLoops = -1
+          self.deltaPlayer?.prepareToPlay()
+          self.deltaPlayer?.play()
+
+          // Voice plays once; the delegate restarts it after a 10-sec gap
+          self.voicePlayer = try AVAudioPlayer(contentsOf: voiceURL)
+          self.voicePlayer?.volume = 1.0
+          self.voicePlayer?.numberOfLoops = 0
+          self.voicePlayer?.delegate = self
+          self.voicePlayer?.prepareToPlay()
+          self.voicePlayer?.play()
+
+          // At 8 minutes, begin fading the voice out over the next 4 minutes
+          self.fadeOutStartTimer = Timer.scheduledTimer(
+            withTimeInterval: 8 * 60,
+            repeats: false
+          ) { [weak self] _ in
+            self?.beginVoiceFadeOut()
+          }
+
+          // Hard stop at 12 minutes regardless of anything else
+          self.masterStopTimer = Timer.scheduledTimer(
+            withTimeInterval: 12 * 60,
+            repeats: false
+          ) { [weak self] _ in
+            self?.tearDownAll()
+          }
+
+          promise.resolve()
+        } catch {
+          promise.reject(error)
+        }
+      }
+    }
+
+    AsyncFunction("startMorning") { (voicePath: String, promise: Promise) in
+      DispatchQueue.main.async { [weak self] in
+        guard let self = self else { return }
+        self.tearDownAll()
+        do {
+          try self.configureSession()
+
+          let voiceURL = self.url(from: voicePath)
+          self.voiceURL = voiceURL
+          self.isMorningSession = true
+          self.isBedtimeSession = false
+          self.morningLoopCount = 0
+
+          // Start silent; fade in to 0.7 over 30 seconds
+          self.voicePlayer = try AVAudioPlayer(contentsOf: voiceURL)
+          self.voicePlayer?.volume = 0.0
+          self.voicePlayer?.numberOfLoops = 0
+          self.voicePlayer?.delegate = self
+          self.voicePlayer?.prepareToPlay()
+          self.voicePlayer?.play()
+
+          self.startMorningFadeIn(targetVolume: 0.7, overSeconds: 30.0)
+
+          promise.resolve()
+        } catch {
+          promise.reject(error)
+        }
+      }
+    }
+
+    AsyncFunction("stop") { (promise: Promise) in
+      DispatchQueue.main.async { [weak self] in
+        self?.tearDownAll()
+        promise.resolve()
+      }
+    }
+  }
+
   // MARK: - Audio Session
 
   private func configureSession() throws {
@@ -41,105 +134,7 @@ class SomniAudioModule: NSObject, AVAudioPlayerDelegate {
     return URL(fileURLWithPath: path)
   }
 
-  // MARK: - Bedtime Session
-
-  @objc(startBedtime:deltaPath:resolver:rejecter:)
-  func startBedtime(
-    _ voicePath: String,
-    deltaPath: String,
-    resolver resolve: @escaping RCTPromiseResolveBlock,
-    rejecter reject: @escaping RCTPromiseRejectBlock
-  ) {
-    DispatchQueue.main.async { [weak self] in
-      guard let self = self else { return }
-      self.tearDownAll()
-
-      do {
-        try self.configureSession()
-
-        let voiceURL = self.url(from: voicePath)
-        let deltaURL = self.url(from: deltaPath)
-        self.voiceURL = voiceURL
-        self.isBedtimeSession = true
-        self.isMorningSession = false
-        self.morningLoopCount = 0
-        self.isFadingOut = false
-
-        // Delta track loops forever beneath the voice at lower volume
-        self.deltaPlayer = try AVAudioPlayer(contentsOf: deltaURL)
-        self.deltaPlayer?.volume = 0.3
-        self.deltaPlayer?.numberOfLoops = -1
-        self.deltaPlayer?.prepareToPlay()
-        self.deltaPlayer?.play()
-
-        // Voice plays once; the delegate restarts it after a 10-sec gap
-        self.voicePlayer = try AVAudioPlayer(contentsOf: voiceURL)
-        self.voicePlayer?.volume = 1.0
-        self.voicePlayer?.numberOfLoops = 0
-        self.voicePlayer?.delegate = self
-        self.voicePlayer?.prepareToPlay()
-        self.voicePlayer?.play()
-
-        // At 8 minutes, begin fading the voice out over the next 4 minutes
-        self.fadeOutStartTimer = Timer.scheduledTimer(
-          withTimeInterval: 8 * 60,
-          repeats: false
-        ) { [weak self] _ in
-          self?.beginVoiceFadeOut()
-        }
-
-        // Hard stop at 12 minutes regardless of anything else
-        self.masterStopTimer = Timer.scheduledTimer(
-          withTimeInterval: 12 * 60,
-          repeats: false
-        ) { [weak self] _ in
-          self?.tearDownAll()
-        }
-
-        resolve(nil)
-      } catch {
-        reject("SOMNI_AUDIO_ERROR", "Bedtime session failed: \(error.localizedDescription)", error)
-      }
-    }
-  }
-
-  // MARK: - Morning Session
-
-  @objc(startMorning:resolver:rejecter:)
-  func startMorning(
-    _ voicePath: String,
-    resolver resolve: @escaping RCTPromiseResolveBlock,
-    rejecter reject: @escaping RCTPromiseRejectBlock
-  ) {
-    DispatchQueue.main.async { [weak self] in
-      guard let self = self else { return }
-      self.tearDownAll()
-
-      do {
-        try self.configureSession()
-
-        let voiceURL = self.url(from: voicePath)
-        self.voiceURL = voiceURL
-        self.isMorningSession = true
-        self.isBedtimeSession = false
-        self.morningLoopCount = 0
-
-        // Start silent; fade in to 0.7 over 30 seconds
-        self.voicePlayer = try AVAudioPlayer(contentsOf: voiceURL)
-        self.voicePlayer?.volume = 0.0
-        self.voicePlayer?.numberOfLoops = 0
-        self.voicePlayer?.delegate = self
-        self.voicePlayer?.prepareToPlay()
-        self.voicePlayer?.play()
-
-        self.startMorningFadeIn(targetVolume: 0.7, overSeconds: 30.0)
-
-        resolve(nil)
-      } catch {
-        reject("SOMNI_AUDIO_ERROR", "Morning session failed: \(error.localizedDescription)", error)
-      }
-    }
-  }
+  // MARK: - Morning Fade-In
 
   private func startMorningFadeIn(targetVolume: Float, overSeconds: Float) {
     let tickInterval: TimeInterval = 0.1
@@ -182,20 +177,7 @@ class SomniAudioModule: NSObject, AVAudioPlayerDelegate {
     }
   }
 
-  // MARK: - Stop (public)
-
-  @objc(stop:rejecter:)
-  func stop(
-    _ resolve: @escaping RCTPromiseResolveBlock,
-    rejecter reject: @escaping RCTPromiseRejectBlock
-  ) {
-    DispatchQueue.main.async { [weak self] in
-      self?.tearDownAll()
-      resolve(nil)
-    }
-  }
-
-  // MARK: - Internal Teardown
+  // MARK: - Teardown
 
   private func tearDownAll() {
     voiceGapTimer?.invalidate();     voiceGapTimer = nil
@@ -220,7 +202,7 @@ class SomniAudioModule: NSObject, AVAudioPlayerDelegate {
 
   // MARK: - AVAudioPlayerDelegate
 
-  func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully _: Bool) {
+  public func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully _: Bool) {
     // Fires on the main thread
     guard player === voicePlayer else { return }
 
@@ -246,7 +228,7 @@ class SomniAudioModule: NSObject, AVAudioPlayerDelegate {
     }
   }
 
-  func audioPlayerDecodeErrorDidOccur(_: AVAudioPlayer, error: Error?) {
+  public func audioPlayerDecodeErrorDidOccur(_: AVAudioPlayer, error: Error?) {
     tearDownAll()
   }
 }

@@ -3,11 +3,11 @@ const path = require('path');
 const fs = require('fs');
 
 const SOURCE_DIR = path.join(__dirname, '..', 'modules', 'somni-audio', 'ios');
-const MODULE_FILES = ['SomniAudioModule.swift', 'SomniAudioModule.m'];
 
-// ─── Step 1: Copy files + patch bridging header ───────────────────────────────
+// ─── Step 1: Copy Swift file + register in ExpoModulesProvider ───────────────
 // withDangerousMod gives us direct filesystem access during prebuild.
-// It runs after the initial iOS project structure is written to disk.
+// By this point expo-modules-autolinking has already written ExpoModulesProvider.swift,
+// so we can patch it to include SomniAudioModule.self in getModuleClasses().
 function withCopySomniFiles(config) {
   return withDangerousMod(config, [
     'ios',
@@ -16,29 +16,38 @@ function withCopySomniFiles(config) {
       const projectName = config.modRequest.projectName;
       const targetDir = path.join(iosRoot, projectName);
 
-      // Copy Swift and ObjC bridge files into the generated iOS project folder
-      for (const file of MODULE_FILES) {
-        const src = path.join(SOURCE_DIR, file);
-        const dst = path.join(targetDir, file);
-        fs.copyFileSync(src, dst);
-        console.log(`[withSomniAudio] Copied ${file} → ios/${projectName}/${file}`);
-      }
+      // Copy the Swift source file into the generated iOS project folder
+      const src = path.join(SOURCE_DIR, 'SomniAudioModule.swift');
+      const dst = path.join(targetDir, 'SomniAudioModule.swift');
+      fs.copyFileSync(src, dst);
+      console.log(`[withSomniAudio] Copied SomniAudioModule.swift → ios/${projectName}/SomniAudioModule.swift`);
 
-      // Ensure the bridging header imports RCTBridgeModule so Swift can
-      // reference RCTPromiseResolveBlock / RCTPromiseRejectBlock without
-      // importing React headers directly in the Swift file.
-      const bridgingHeader = path.join(targetDir, `${projectName}-Bridging-Header.h`);
-      if (fs.existsSync(bridgingHeader)) {
-        let content = fs.readFileSync(bridgingHeader, 'utf8');
-        if (!content.includes('<React/RCTBridgeModule.h>')) {
-          content = '#import <React/RCTBridgeModule.h>\n' + content;
-          fs.writeFileSync(bridgingHeader, content);
-          console.log('[withSomniAudio] Added RCTBridgeModule import to bridging header');
+      // Register the module in ExpoModulesProvider.swift so expo-modules-core
+      // includes it in getModuleClasses() and makes it available via
+      // requireNativeModule('SomniAudio') from JavaScript.
+      const providerPath = path.join(targetDir, 'ExpoModulesProvider.swift');
+      if (fs.existsSync(providerPath)) {
+        let content = fs.readFileSync(providerPath, 'utf8');
+        if (!content.includes('SomniAudioModule.self')) {
+          // Locate the getModuleClasses return array and append our entry.
+          // The pattern matches: func getModuleClasses ... return [ ... ]
+          const patched = content.replace(
+            /(func getModuleClasses[\s\S]*?return \[)([\s\S]*?)(\s+\])/,
+            (_, before, items, close) => {
+              const indentMatch = items.match(/\n(\s+)/);
+              const indent = indentMatch ? indentMatch[1] : '      ';
+              return `${before}${items}\n${indent}SomniAudioModule.self,${close}`;
+            }
+          );
+          if (patched !== content) {
+            fs.writeFileSync(providerPath, patched);
+            console.log('[withSomniAudio] Registered SomniAudioModule.self in ExpoModulesProvider.swift');
+          } else {
+            console.warn('[withSomniAudio] Could not patch ExpoModulesProvider.swift — getModuleClasses pattern not matched');
+          }
         }
       } else {
-        // Header doesn't exist yet — create it
-        fs.writeFileSync(bridgingHeader, '#import <React/RCTBridgeModule.h>\n');
-        console.log('[withSomniAudio] Created bridging header with RCTBridgeModule import');
+        console.warn(`[withSomniAudio] ExpoModulesProvider.swift not found at ${providerPath} — module will not be registered`);
       }
 
       return config;
@@ -46,28 +55,21 @@ function withCopySomniFiles(config) {
   ]);
 }
 
-// ─── Step 2: Register files in project.pbxproj ────────────────────────────────
-// withXcodeProject gives us the parsed xcode project object (from the `xcode`
-// npm package). We add both files as compiled sources on the app target.
+// ─── Step 2: Register Swift file in project.pbxproj ──────────────────────────
+// withXcodeProject adds SomniAudioModule.swift to the compiled sources build
+// phase so Xcode compiles it as part of the app target.
 function withXcodeSomniFiles(config) {
   return withXcodeProject(config, (config) => {
     const xcodeProject = config.modResults;
     const projectName = config.modRequest.projectName;
 
-    // Resolve the main app target UUID
     const targetUUID = xcodeProject.getFirstTarget().uuid;
-
-    // Resolve the PBX group that contains the app's Swift sources
     const groupKey = xcodeProject.findPBXGroupKey({ name: projectName });
+    const filePath = `${projectName}/SomniAudioModule.swift`;
 
-    for (const file of MODULE_FILES) {
-      const filePath = `${projectName}/${file}`;
-
-      // Guard: don't double-add if a previous prebuild already registered it
-      if (!xcodeProject.hasFile(filePath)) {
-        xcodeProject.addSourceFile(filePath, { target: targetUUID }, groupKey);
-        console.log(`[withSomniAudio] Added ${file} to Xcode project`);
-      }
+    if (!xcodeProject.hasFile(filePath)) {
+      xcodeProject.addSourceFile(filePath, { target: targetUUID }, groupKey);
+      console.log('[withSomniAudio] Added SomniAudioModule.swift to Xcode project');
     }
 
     return config;

@@ -1,31 +1,28 @@
 /**
- * SomniAudio — thin JS bridge to the native SomniAudioModule.
+ * SomniAudio — thin JS bridge to the native SomniAudioModule (expo-modules-core).
  *
  * Path conventions expected by the native layer:
  *   voicePath  — absolute path OR file:// URI to somni_recording.m4a
  *   deltaPath  — absolute path OR file:// URI to the delta binaural asset
  *
- * Both paths can be obtained from expo-file-system / expo-asset before calling:
+ * Resolve paths before calling:
  *   import * as FileSystem from 'expo-file-system';
  *   const voicePath = FileSystem.documentDirectory + 'somni_recording.m4a';
  *
  *   import { Asset } from 'expo-asset';
  *   const [asset] = await Asset.loadAsync(require('./assets/audio/delta.mp3'));
- *   const deltaPath = asset.localUri!;   // already downloaded as file://…
+ *   const deltaPath = asset.localUri!;
  */
 
-import { NativeModules, Platform } from 'react-native';
+import { requireOptionalNativeModule } from 'expo-modules-core';
 
-const { SomniAudioModule } = NativeModules;
-
-function assertAvailable(): void {
-  if (!SomniAudioModule) {
-    throw new Error(
-      'SomniAudioModule is not registered. Make sure you ran expo prebuild ' +
-        'with the withSomniAudio plugin and rebuilt the native app.'
-    );
-  }
+interface SomniAudioNativeModule {
+  startBedtime(voicePath: string, deltaPath: string): Promise<void>;
+  startMorning(voicePath: string): Promise<void>;
+  stop(): Promise<void>;
 }
+
+const NativeModule = requireOptionalNativeModule<SomniAudioNativeModule>('SomniAudio');
 
 /**
  * Start the bedtime session.
@@ -36,9 +33,8 @@ function assertAvailable(): void {
  * 12 min  — everything stops
  */
 export function startBedtime(voicePath: string, deltaPath: string): Promise<void> {
-  if (Platform.OS !== 'ios') return Promise.resolve();
-  assertAvailable();
-  return SomniAudioModule.startBedtime(voicePath, deltaPath);
+  if (!NativeModule) return Promise.resolve();
+  return NativeModule.startBedtime(voicePath, deltaPath);
 }
 
 /**
@@ -48,9 +44,8 @@ export function startBedtime(voicePath: string, deltaPath: string): Promise<void
  * Fades volume in from 0 → 0.7 over the first 30 seconds, then holds.
  */
 export function startMorning(voicePath: string): Promise<void> {
-  if (Platform.OS !== 'ios') return Promise.resolve();
-  assertAvailable();
-  return SomniAudioModule.startMorning(voicePath);
+  if (!NativeModule) return Promise.resolve();
+  return NativeModule.startMorning(voicePath);
 }
 
 /**
@@ -58,7 +53,6 @@ export function startMorning(voicePath: string): Promise<void> {
  * Safe to call when nothing is playing.
  */
 export function stopAudio(): Promise<void> {
-  if (Platform.OS !== 'ios') return Promise.resolve();
-  if (!SomniAudioModule) return Promise.resolve();
-  return SomniAudioModule.stop();
+  if (!NativeModule) return Promise.resolve();
+  return NativeModule.stop();
 }
