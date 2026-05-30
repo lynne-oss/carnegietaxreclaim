@@ -4,6 +4,8 @@ import AVFoundation
 @objc(SomniAudioModule)
 class SomniAudioModule: NSObject, AVAudioPlayerDelegate {
 
+  @objc static func requiresMainQueueSetup() -> Bool { return false }
+
   // MARK: - State
 
   private var voicePlayer: AVAudioPlayer?
