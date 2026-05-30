@@ -1,0 +1,11 @@
+{
+  "name": "somni-audio",
+  "version": "1.0.0",
+  "description": "Native audio module for The Somni sleep app",
+  "main": "src/index.ts",
+  "source": "src/index.ts",
+  "files": ["src", "ios", "expo-module.config.json"],
+  "peerDependencies": {
+    "expo-modules-core": "*"
+  }
+}
